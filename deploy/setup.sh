@@ -122,32 +122,27 @@ if [ ! -s "${LORA_DIR}/ltx-2.3-22b-distilled-lora-384.safetensors" ]; then
         || { rm -f "${LORA_DIR}/ltx-2.3-22b-distilled-lora-384.safetensors"; false; }
 fi
 
-# Gemma 3 12B text encoder (multi-shard, required by LTXVGemmaCLIPLoader / LTXAVTextEncoderLoader)
-TE_DIR="${COMFYUI_DIR}/models/text_encoders"
-GEMMA="${TE_DIR}/gemma-3-12b-it-qat-q4_0-unquantized"
-mkdir -p "$GEMMA"
-if [ ! -s "${GEMMA}/model-00001-of-00005.safetensors" ]; then
-    log "  -> Gemma 3 12B text encoder (~38GB total)..."
-    HF_BASE="https://huggingface.co/google/gemma-3-12b-it-qat-q4_0-unquantized/resolve/main"
-    for i in $(seq -w 1 5); do
-        file="${GEMMA}/model-0000${i}-of-00005.safetensors"
-        if [ ! -s "$file" ]; then
-            rm -f "$file"
-            wget -q --show-progress --header="Authorization: Bearer ${HF_TOKEN:-}" \
-                -O "$file" "${HF_BASE}/model-0000${i}-of-00005.safetensors" \
-                || { rm -f "$file"; false; }
-        fi
-    done
+# Gemma 3 12B abliterated LoRA (required by LTX-2.3 text encoder node)
+if [ ! -s "${LORA_DIR}/gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors" ]; then
+    rm -f "${LORA_DIR}/gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors"
+    log "  -> Gemma 3 12B abliterated LoRA..."
+    wget -q --show-progress \
+        -O "${LORA_DIR}/gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors" \
+        "https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/loras/gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors" \
+        || { rm -f "${LORA_DIR}/gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors"; false; }
 fi
-log "  -> Gemma 3 12B config files..."
-for f in tokenizer.model tokenizer_config.json config.json model.safetensors.index.json \
-          special_tokens_map.json tokenizer.json preprocessor_config.json generation_config.json; do
-    if [ ! -s "${GEMMA}/${f}" ]; then
-        wget -q --show-progress --header="Authorization: Bearer ${HF_TOKEN:-}" \
-            -O "${GEMMA}/${f}" \
-            "https://huggingface.co/google/gemma-3-12b-it-qat-q4_0-unquantized/resolve/main/${f}" || true
-    fi
-done
+
+# Gemma 3 12B FP4 text encoder (~8.8GB, single file packaged by Comfy-Org)
+TE_DIR="${COMFYUI_DIR}/models/text_encoders"
+mkdir -p "$TE_DIR"
+if [ ! -s "${TE_DIR}/gemma_3_12B_it_fp4_mixed.safetensors" ]; then
+    rm -f "${TE_DIR}/gemma_3_12B_it_fp4_mixed.safetensors"
+    log "  -> Gemma 3 12B FP4 text encoder (~8.8GB)..."
+    wget -q --show-progress \
+        -O "${TE_DIR}/gemma_3_12B_it_fp4_mixed.safetensors" \
+        "https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors" \
+        || { rm -f "${TE_DIR}/gemma_3_12B_it_fp4_mixed.safetensors"; false; }
+fi
 
 # Spatial upscaler 2x v1.1 (~950MB)
 UP="${COMFYUI_DIR}/models/latent_upscale_models"

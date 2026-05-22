@@ -116,9 +116,8 @@ jobs:
           ssh vastai << 'DEPLOY_EOF'
             set -e
 
-            # Stop existing services
+            # Stop existing services (tunnel preserved to keep quick tunnel URL stable)
             tmux kill-session -t worker 2>/dev/null || true
-            tmux kill-session -t tunnel 2>/dev/null || true
             tmux kill-session -t beszel 2>/dev/null || true
 
             chmod +x /workspace/videogen-worker /workspace/start.sh

@@ -5,7 +5,7 @@
 # ComfyUI is already started by the Vast.ai template entrypoint on port 18188.
 # This script starts:
 #   - videogen-worker on port 18288 (mapped to external 8288)
-#   - cloudflared tunnel (optional, if CF_TUNNEL_TOKEN is set)
+#   - cloudflared tunnel (named if CF_TUNNEL_TOKEN set, else quick tunnel)
 #
 # Required env vars:
 #   AUTH_TOKEN        - Bearer token for API auth
@@ -44,9 +44,9 @@ if [ ! -f "$BINARY" ]; then
 fi
 
 # =============================================================================
-# Kill existing sessions
+# Kill existing sessions (preserve tunnel to keep URL stable across redeploys)
 # =============================================================================
-for session in worker tunnel beszel; do
+for session in worker beszel; do
     tmux kill-session -t "$session" 2>/dev/null || true
 done
 
@@ -92,12 +92,25 @@ fi
 # Start Cloudflare tunnel
 # =============================================================================
 if [ -n "${CF_TUNNEL_TOKEN:-}" ]; then
-    log "Starting Cloudflare tunnel..."
+    tmux kill-session -t tunnel 2>/dev/null || true
+    log "Starting Cloudflare named tunnel..."
     tmux new-session -d -s tunnel \
         "cloudflared tunnel run --token '${CF_TUNNEL_TOKEN}' 2>&1 | tee ${LOG_DIR}/tunnel.log"
     log "Tunnel started — connected to comfyui.prakash.yral.com"
+elif tmux has-session -t tunnel 2>/dev/null; then
+    log "Quick tunnel already running — reusing URL (tmux attach -t tunnel)"
 else
-    warn "Skipping tunnel (no CF_TUNNEL_TOKEN)"
+    log "Starting Cloudflare quick tunnel..."
+    tmux new-session -d -s tunnel \
+        "cloudflared tunnel --url http://localhost:${WORKER_PORT} 2>&1 | tee ${LOG_DIR}/tunnel.log"
+    sleep 4
+    TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "${LOG_DIR}/tunnel.log" 2>/dev/null | head -1)
+    if [ -n "${TUNNEL_URL:-}" ]; then
+        log "Quick tunnel URL: ${TUNNEL_URL}"
+        log "Set COMFYUI_API_URL=${TUNNEL_URL} in off-chain-agent"
+    else
+        warn "Quick tunnel started — check URL: tmux attach -t tunnel"
+    fi
 fi
 
 # =============================================================================
@@ -129,6 +142,9 @@ echo -e "  Swagger UI:  http://localhost:${WORKER_PORT}/swagger-ui"
 echo -e "  External:    http://localhost:8288 (via Vast.ai port mapping)"
 if [ -n "${CF_TUNNEL_TOKEN:-}" ]; then
     echo -e "  Public URL:  https://comfyui.prakash.yral.com"
+elif [ -n "${TUNNEL_URL:-}" ]; then
+    echo -e "  Quick URL:   ${TUNNEL_URL}"
+    echo -e "               (ephemeral — stable until instance reboot)"
 fi
 echo ""
 echo -e "  tmux attach -t worker   # Worker logs"
