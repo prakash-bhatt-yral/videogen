@@ -12,6 +12,12 @@ WORKSPACE="/workspace"
 COMFYUI_DIR="${WORKSPACE}/ComfyUI"
 LOG_DIR="/var/log/comfyui"
 
+# Redirect caches to /workspace to avoid filling the small root overlay
+export HF_HOME="${WORKSPACE}/hf_cache"
+export TRANSFORMERS_CACHE="${WORKSPACE}/hf_cache"
+export PIP_CACHE_DIR="${WORKSPACE}/pip_cache"
+mkdir -p "${WORKSPACE}/hf_cache" "${WORKSPACE}/pip_cache"
+
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
@@ -44,7 +50,7 @@ fi
 if [ ! -f "/usr/local/bin/beszel-agent" ]; then
     log "Installing Beszel Agent..."
     wget -q --show-progress -O beszel-agent.tar.gz https://github.com/henrygd/beszel/releases/latest/download/beszel-agent_linux_amd64.tar.gz
-    tar -xzf beszel-agent.tar.gz
+    tar -xzf beszel-agent.tar.gz beszel-agent
     mv beszel-agent /usr/local/bin/
     rm beszel-agent.tar.gz
 fi
@@ -53,19 +59,15 @@ fi
 # ComfyUI
 # =============================================================================
 if [ -d "$COMFYUI_DIR" ]; then
-    log "ComfyUI exists, updating..."
-    cd "$COMFYUI_DIR"
-    git checkout master || true
-    git pull
+    log "ComfyUI already installed, skipping update (to avoid filling root overlay)."
 else
     log "Cloning ComfyUI..."
     cd "$WORKSPACE"
     git clone https://github.com/comfyanonymous/ComfyUI.git
+    cd "$COMFYUI_DIR"
+    log "Installing ComfyUI dependencies..."
+    pip install --no-cache-dir -r requirements.txt -q
 fi
-
-cd "$COMFYUI_DIR"
-log "Installing ComfyUI dependencies..."
-pip install --no-cache-dir -r requirements.txt -q
 
 # =============================================================================
 # Custom nodes
@@ -100,47 +102,45 @@ log "Downloading model weights..."
 CKPT="${COMFYUI_DIR}/models/checkpoints"
 mkdir -p "$CKPT"
 
-# LTX-2 19B Distilled
-if [ ! -s "${CKPT}/ltx-2-19b-distilled.safetensors" ]; then
-    rm -f "${CKPT}/ltx-2-19b-distilled.safetensors"
-    log "  -> LTX-2 19B Distilled (~38GB)..."
-    wget -q --show-progress --header="Authorization: Bearer ${HF_TOKEN:-}" -O "${CKPT}/ltx-2-19b-distilled.safetensors" \
-        "https://huggingface.co/Lightricks/LTX-2/resolve/main/ltx-2-19b-distilled.safetensors"
+# LTX-2.3 22B Dev FP8 (~27GB)
+if [ ! -s "${CKPT}/ltx-2.3-22b-dev-fp8.safetensors" ]; then
+    rm -f "${CKPT}/ltx-2.3-22b-dev-fp8.safetensors"
+    log "  -> LTX-2.3 22B Dev FP8 (~27GB)..."
+    wget -q --show-progress -O "${CKPT}/ltx-2.3-22b-dev-fp8.safetensors" \
+        "https://huggingface.co/Lightricks/LTX-2.3-fp8/resolve/main/ltx-2.3-22b-dev-fp8.safetensors" \
+        || { rm -f "${CKPT}/ltx-2.3-22b-dev-fp8.safetensors"; false; }
 fi
 
-# Gemma 3 12B
-CLIP_DIR="${COMFYUI_DIR}/models/clip"
-mkdir -p "$CLIP_DIR"
-GEMMA="${CLIP_DIR}/gemma-3-12b-it-qat-q4_0-unquantized"
-if [ ! -d "$GEMMA" ] || [ -z "$(ls -A "$GEMMA")" ]; then
-    log "  -> Gemma 3 12B text encoder..."
-    mkdir -p "$GEMMA"
-    for i in $(seq -w 1 5); do
-        file="${GEMMA}/model-0000${i}-of-00005.safetensors"
-        if [ ! -s "$file" ]; then
-            rm -f "$file"
-            wget -q --show-progress --header="Authorization: Bearer ${HF_TOKEN:-}" -O "$file" \
-                "https://huggingface.co/google/gemma-3-12b-it-qat-q4_0-unquantized/resolve/main/model-0000${i}-of-00005.safetensors" || true
-        fi
-    done
+# LTX-2.3 Distilled LoRA (~7GB)
+LORA_DIR="${COMFYUI_DIR}/models/loras"
+mkdir -p "$LORA_DIR"
+if [ ! -s "${LORA_DIR}/ltx-2.3-22b-distilled-lora-384.safetensors" ]; then
+    rm -f "${LORA_DIR}/ltx-2.3-22b-distilled-lora-384.safetensors"
+    log "  -> LTX-2.3 Distilled LoRA (~7GB)..."
+    wget -q --show-progress -O "${LORA_DIR}/ltx-2.3-22b-distilled-lora-384.safetensors" \
+        "https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-22b-distilled-lora-384.safetensors" \
+        || { rm -f "${LORA_DIR}/ltx-2.3-22b-distilled-lora-384.safetensors"; false; }
 fi
 
-log "  -> Gemma 3 config files..."
-for f in tokenizer.model tokenizer_config.json config.json model.safetensors.index.json special_tokens_map.json tokenizer.json preprocessor_config.json generation_config.json; do
-    if [ ! -s "${GEMMA}/${f}" ]; then
-        wget -q --show-progress --header="Authorization: Bearer ${HF_TOKEN:-}" -O "${GEMMA}/${f}" \
-            "https://huggingface.co/google/gemma-3-12b-it-qat-q4_0-unquantized/resolve/main/${f}" || true
-    fi
-done
+# Gemma 3 12B FP4 Text Encoder (~8.8GB, single file)
+TE_DIR="${COMFYUI_DIR}/models/text_encoders"
+mkdir -p "$TE_DIR"
+if [ ! -s "${TE_DIR}/gemma_3_12B_it_fp4_mixed.safetensors" ]; then
+    rm -f "${TE_DIR}/gemma_3_12B_it_fp4_mixed.safetensors"
+    log "  -> Gemma 3 12B FP4 Text Encoder (~8.8GB)..."
+    wget -q --show-progress -O "${TE_DIR}/gemma_3_12B_it_fp4_mixed.safetensors" \
+        "https://huggingface.co/Lightricks/LTX-2.3-fp8/resolve/main/gemma_3_12B_it_fp4_mixed.safetensors" \
+        || { rm -f "${TE_DIR}/gemma_3_12B_it_fp4_mixed.safetensors"; false; }
+fi
 
-# Spatial upscaler
+# Spatial upscaler 2x v1.1 (~950MB)
 UP="${COMFYUI_DIR}/models/latent_upscale_models"
 mkdir -p "$UP"
-if [ ! -s "${UP}/ltx-2-spatial-upscaler-x2-1.0.safetensors" ]; then
-    rm -f "${UP}/ltx-2-spatial-upscaler-x2-1.0.safetensors"
-    log "  -> Spatial Upscaler 2x..."
-    wget -q --show-progress --header="Authorization: Bearer ${HF_TOKEN:-}" -O "${UP}/ltx-2-spatial-upscaler-x2-1.0.safetensors" \
-        "https://huggingface.co/Lightricks/LTX-2/resolve/main/ltx-2-spatial-upscaler-x2-1.0.safetensors" || true
+if [ ! -s "${UP}/ltx-2.3-spatial-upscaler-x2-1.1.safetensors" ]; then
+    rm -f "${UP}/ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
+    log "  -> Spatial Upscaler 2x v1.1 (~950MB)..."
+    wget -q --show-progress -O "${UP}/ltx-2.3-spatial-upscaler-x2-1.1.safetensors" \
+        "https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-spatial-upscaler-x2-1.1.safetensors" || true
 fi
 
 # =============================================================================
