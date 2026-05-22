@@ -103,8 +103,8 @@ else
     log "Starting Cloudflare quick tunnel..."
     tmux new-session -d -s tunnel \
         "cloudflared tunnel --url http://localhost:${WORKER_PORT} 2>&1 | tee ${LOG_DIR}/tunnel.log"
-    sleep 4
-    TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "${LOG_DIR}/tunnel.log" 2>/dev/null | head -1)
+    sleep 8
+    TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "${LOG_DIR}/tunnel.log" 2>/dev/null | head -1 || true)
     if [ -n "${TUNNEL_URL:-}" ]; then
         log "Quick tunnel URL: ${TUNNEL_URL}"
         log "Set COMFYUI_API_URL=${TUNNEL_URL} in off-chain-agent"
