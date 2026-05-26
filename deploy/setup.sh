@@ -164,7 +164,7 @@ else
     log "Starting ComfyUI in tmux (CUDA base image)..."
     tmux kill-session -t comfyui 2>/dev/null || true
     tmux new-session -d -s comfyui \
-        "cd ${COMFYUI_DIR} && python main.py --listen 0.0.0.0 --port 18188 --enable-cors-header 2>&1 | tee ${LOG_DIR}/comfyui.log"
+        "cd ${COMFYUI_DIR} && python3 main.py --listen 0.0.0.0 --port 18188 --enable-cors-header 2>&1 | tee ${LOG_DIR}/comfyui.log"
     log "ComfyUI started. Logs: ${LOG_DIR}/comfyui.log | tmux attach -t comfyui"
 fi
 
