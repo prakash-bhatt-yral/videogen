@@ -17,6 +17,10 @@ on:
         description: "Run setup.sh (installs models/nodes)"
         type: boolean
         default: false
+      named_tunnel:
+        description: "Use named CF tunnel (videogen.prakash.yral.com). False = quick tunnel for testing."
+        type: boolean
+        default: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -109,7 +113,6 @@ jobs:
         env:
           AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
-          CF_TUNNEL_TOKEN: ${{ secrets.CF_TUNNEL_TOKEN }}
           BESZEL_KEY: ${{ secrets.BESZEL_KEY }}
           BESZEL_TOKEN: ${{ secrets.BESZEL_TOKEN }}
         run: |
@@ -125,7 +128,10 @@ jobs:
             # Export env vars for start.sh
             export AUTH_TOKEN="${{ secrets.AUTH_TOKEN }}"
             export SENTRY_DSN="${{ secrets.SENTRY_DSN }}"
-            export CF_TUNNEL_TOKEN="${{ secrets.CF_TUNNEL_TOKEN }}"
+            if [ "${{ github.event.inputs.named_tunnel }}" != "false" ]; then
+              export CF_TUNNEL_TOKEN="${{ secrets.CF_TUNNEL_TOKEN }}"
+              export CF_TUNNEL_HOSTNAME="videogen.prakash.yral.com"
+            fi
             export BESZEL_KEY="${{ secrets.BESZEL_KEY }}"
             export BESZEL_TOKEN="${{ secrets.BESZEL_TOKEN }}"
 

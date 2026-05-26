@@ -96,7 +96,7 @@ if [ -n "${CF_TUNNEL_TOKEN:-}" ]; then
     log "Starting Cloudflare named tunnel..."
     tmux new-session -d -s tunnel \
         "cloudflared tunnel run --token '${CF_TUNNEL_TOKEN}' 2>&1 | tee ${LOG_DIR}/tunnel.log"
-    log "Tunnel started — connected to comfyui.prakash.yral.com"
+    log "Tunnel started — connected to ${CF_TUNNEL_HOSTNAME:-videogen.prakash.yral.com}"
 elif tmux has-session -t tunnel 2>/dev/null; then
     log "Quick tunnel already running — reusing URL (tmux attach -t tunnel)"
 else
@@ -141,7 +141,7 @@ echo -e "  Worker:      http://localhost:${WORKER_PORT}"
 echo -e "  Swagger UI:  http://localhost:${WORKER_PORT}/swagger-ui"
 echo -e "  External:    http://localhost:8288 (via Vast.ai port mapping)"
 if [ -n "${CF_TUNNEL_TOKEN:-}" ]; then
-    echo -e "  Public URL:  https://comfyui.prakash.yral.com"
+    echo -e "  Public URL:  https://${CF_TUNNEL_HOSTNAME:-comfyui.prakash.yral.com}"
 elif [ -n "${TUNNEL_URL:-}" ]; then
     echo -e "  Quick URL:   ${TUNNEL_URL}"
     echo -e "               (ephemeral — stable until instance reboot)"
