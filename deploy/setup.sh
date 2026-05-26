@@ -95,6 +95,27 @@ done
 pip install --no-cache-dir sageattention -q 2>/dev/null || warn "SageAttention failed"
 
 # =============================================================================
+# PyTorch — pin to version compatible with installed CUDA driver
+# =============================================================================
+CUDA_VER=$(nvidia-smi 2>/dev/null | grep -oP 'CUDA Version: \K[\d.]+' | head -1 || echo "")
+if [ -n "$CUDA_VER" ]; then
+    CUDA_MAJOR=$(echo "$CUDA_VER" | cut -d. -f1)
+    CUDA_MINOR=$(echo "$CUDA_VER" | cut -d. -f2)
+    CUDA_INT=$((CUDA_MAJOR * 10 + CUDA_MINOR))
+    if   [ "$CUDA_INT" -ge 130 ]; then TORCH_CUDA="cu130"
+    elif [ "$CUDA_INT" -ge 126 ]; then TORCH_CUDA="cu126"
+    elif [ "$CUDA_INT" -ge 124 ]; then TORCH_CUDA="cu124"
+    elif [ "$CUDA_INT" -ge 121 ]; then TORCH_CUDA="cu121"
+    else                                TORCH_CUDA="cu118"
+    fi
+    log "CUDA ${CUDA_VER} → installing PyTorch for ${TORCH_CUDA}..."
+    pip install --force-reinstall --quiet torch torchvision torchaudio \
+        --index-url "https://download.pytorch.org/whl/${TORCH_CUDA}"
+else
+    warn "Could not detect CUDA version — keeping default PyTorch"
+fi
+
+# =============================================================================
 # Model weights
 # =============================================================================
 log "Downloading model weights..."
