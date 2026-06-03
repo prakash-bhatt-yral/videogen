@@ -7,6 +7,7 @@ mod auth;
 mod backend;
 mod cleanup;
 mod config;
+mod jobs;
 mod rabbitmq;
 mod routes;
 mod webhook;
