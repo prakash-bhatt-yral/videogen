@@ -1,61 +1,238 @@
 use anyhow::Result;
 
 #[derive(Clone, Debug)]
+pub struct RabbitMqConfig {
+    pub enabled: bool,
+    pub amqps_urls: Vec<String>,
+    pub queue: String,
+    pub prefetch: u16,
+    pub concurrency: usize,
+    pub tls_ca_cert_pem_b64: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CompletionAuthConfig {
+    pub key_id: String,
+    pub secret_b64: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct WorkerStateConfig {
+    pub db_path: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct UploadConfig {
+    pub refresh_margin_secs: i64,
+    pub upload_timeout_secs: u64,
+    pub cleanup_after_upload: bool,
+    pub multipart_field_name: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct OutboxConfig {
+    pub initial_backoff_secs: u64,
+    pub max_backoff_secs: u64,
+    pub max_attempts: u32,
+    pub timeout_secs: u64,
+    pub retention_hours: u64,
+}
+
+#[derive(Clone, Debug)]
 pub struct AppConfig {
     pub port: u16,
     pub backend_type: String,
     pub auth_token: Option<String>,
     pub sentry_dsn: Option<String>,
 
-    // ComfyUI backend config
     pub comfyui_host: String,
     pub comfyui_port: u16,
     pub comfyui_output_dir: String,
 
-    // Video cleanup config
     pub video_ttl_minutes: u64,
     pub cleanup_check_interval: u64,
+
+    pub rabbitmq: RabbitMqConfig,
+    pub completion_auth: Option<CompletionAuthConfig>,
+    pub worker_state: WorkerStateConfig,
+    pub upload: UploadConfig,
+    pub outbox: OutboxConfig,
+    pub generation_timeout_secs: u64,
+    pub staged_input_ttl_hours: u64,
 }
 
 impl AppConfig {
     pub fn from_env() -> Result<Self> {
-        // Parse COMFYUI_API_BASE (e.g. "http://localhost:18188") if set,
-        // falling back to COMFYUI_HOST + COMFYUI_PORT env vars.
-        let (comfyui_host, comfyui_port) = if let Ok(base) = std::env::var("COMFYUI_API_BASE") {
-            // Parse "http://host:port" format
-            let url = url::Url::parse(&base)?;
+        let env: std::collections::HashMap<String, String> = std::env::vars().collect();
+        Self::from_env_map(&env)
+    }
+
+    pub fn from_env_map(env: &std::collections::HashMap<String, String>) -> Result<Self> {
+        let get = |key: &str| env.get(key).map(|s| s.as_str()).unwrap_or("");
+        let get_opt = |key: &str| -> Option<String> { env.get(key).filter(|s| !s.is_empty()).cloned() };
+        let parse_u64 = |key: &str, default: u64| -> Result<u64> {
+            match env.get(key) {
+                Some(v) => v.parse::<u64>().map_err(|_| anyhow::anyhow!("{key} must be a valid integer: {v}")),
+                None => Ok(default),
+            }
+        };
+        let parse_u16 = |key: &str, default: u16| -> Result<u16> {
+            match env.get(key) {
+                Some(v) => v.parse::<u16>().map_err(|_| anyhow::anyhow!("{key} must be a valid integer: {v}")),
+                None => Ok(default),
+            }
+        };
+        let parse_usize = |key: &str, default: usize| -> Result<usize> {
+            match env.get(key) {
+                Some(v) => v.parse::<usize>().map_err(|_| anyhow::anyhow!("{key} must be a valid integer: {v}")),
+                None => Ok(default),
+            }
+        };
+        let parse_bool = |key: &str, default: bool| -> bool {
+            env.get(key).map(|v| v.eq_ignore_ascii_case("true") || v == "1").unwrap_or(default)
+        };
+
+        let rabbitmq_enabled = parse_bool("VIDEOGEN_RABBITMQ_ENABLED", false);
+
+        if rabbitmq_enabled {
+            if get("VIDEOGEN_RABBITMQ_AMQPS_URLS").is_empty() {
+                return Err(anyhow::anyhow!("VIDEOGEN_RABBITMQ_AMQPS_URLS is required when VIDEOGEN_RABBITMQ_ENABLED=true"));
+            }
+            if get("PRAKASH_COMPLETION_HMAC_KEY_ID").is_empty() {
+                return Err(anyhow::anyhow!("PRAKASH_COMPLETION_HMAC_KEY_ID is required when VIDEOGEN_RABBITMQ_ENABLED=true"));
+            }
+            if get("PRAKASH_COMPLETION_HMAC_SECRET_B64").is_empty() {
+                return Err(anyhow::anyhow!("PRAKASH_COMPLETION_HMAC_SECRET_B64 is required when VIDEOGEN_RABBITMQ_ENABLED=true"));
+            }
+            let secret = get("PRAKASH_COMPLETION_HMAC_SECRET_B64");
+            use base64::Engine;
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(secret)
+                .map_err(|_| anyhow::anyhow!("PRAKASH_COMPLETION_HMAC_SECRET_B64 is not valid base64"))?;
+            if decoded.len() != 32 {
+                return Err(anyhow::anyhow!(
+                    "PRAKASH_COMPLETION_HMAC_SECRET_B64 must decode to exactly 32 bytes, got {}",
+                    decoded.len()
+                ));
+            }
+        }
+
+        let rabbitmq = RabbitMqConfig {
+            enabled: rabbitmq_enabled,
+            amqps_urls: get("VIDEOGEN_RABBITMQ_AMQPS_URLS")
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
+            queue: env.get("VIDEOGEN_RABBITMQ_QUEUE").cloned().unwrap_or_else(|| "videogen.ltx.generate".to_string()),
+            prefetch: parse_u16("VIDEOGEN_RABBITMQ_PREFETCH", 1)?,
+            concurrency: parse_usize("VIDEOGEN_RABBITMQ_CONCURRENCY", 1)?,
+            tls_ca_cert_pem_b64: get_opt("VIDEOGEN_RABBITMQ_TLS_CA_CERT_PEM_B64"),
+        };
+
+        let completion_auth = if rabbitmq_enabled {
+            Some(CompletionAuthConfig {
+                key_id: get("PRAKASH_COMPLETION_HMAC_KEY_ID").to_string(),
+                secret_b64: get("PRAKASH_COMPLETION_HMAC_SECRET_B64").to_string(),
+            })
+        } else {
+            None
+        };
+
+        let (comfyui_host, comfyui_port) = if let Some(base) = env.get("COMFYUI_API_BASE") {
+            let url = url::Url::parse(base)?;
             let host = url.host_str().unwrap_or("127.0.0.1").to_string();
             let port = url.port().unwrap_or(18188);
             (host, port)
         } else {
-            let host = std::env::var("COMFYUI_HOST").unwrap_or_else(|_| "127.0.0.1".into());
-            let port: u16 = std::env::var("COMFYUI_PORT")
-                .unwrap_or_else(|_| "18188".into())
-                .parse()?;
+            let host = env.get("COMFYUI_HOST").cloned().unwrap_or_else(|| "127.0.0.1".into());
+            let port: u16 = env.get("COMFYUI_PORT").map(|v| v.parse()).transpose()?.unwrap_or(18188);
             (host, port)
         };
 
-        Ok(Self {
-            // Default 18288: Vast.ai maps external 8288 -> internal 18288
-            port: std::env::var("PORT")
-                .unwrap_or_else(|_| "18288".into())
-                .parse()?,
-            backend_type: std::env::var("BACKEND_TYPE").unwrap_or_else(|_| "comfyui".into()),
-            auth_token: std::env::var("AUTH_TOKEN").ok().filter(|s| !s.is_empty()),
-            sentry_dsn: std::env::var("SENTRY_DSN").ok().filter(|s| !s.is_empty()),
+        let generation_timeout_secs = parse_u64("VIDEOGEN_LTX_GENERATION_TIMEOUT_SECS", 1800)?;
+        let staged_input_ttl_hours = parse_u64("VIDEOGEN_VAST_STAGED_IMAGE_TTL_HOURS", 24)?;
 
+        let min_ttl_hours = (generation_timeout_secs as f64 / 3600.0).ceil().max(1.0) as u64;
+        if staged_input_ttl_hours < min_ttl_hours {
+            return Err(anyhow::anyhow!(
+                "VIDEOGEN_VAST_STAGED_IMAGE_TTL_HOURS ({staged_input_ttl_hours}) must be >= {min_ttl_hours} (generation_timeout / 3600 rounded up)"
+            ));
+        }
+
+        Ok(Self {
+            port: parse_u16("PORT", 18288)?,
+            backend_type: env.get("BACKEND_TYPE").cloned().unwrap_or_else(|| "comfyui".into()),
+            auth_token: get_opt("AUTH_TOKEN"),
+            sentry_dsn: get_opt("SENTRY_DSN"),
             comfyui_host,
             comfyui_port,
-            comfyui_output_dir: std::env::var("COMFYUI_OUTPUT_DIR")
-                .unwrap_or_else(|_| "/workspace/ComfyUI/output".into()),
-            video_ttl_minutes: std::env::var("VIDEO_TTL_MINUTES")
-                .unwrap_or_else(|_| "10".into())
-                .parse()
-                .unwrap_or(10),
-            cleanup_check_interval: std::env::var("CLEANUP_CHECK_INTERVAL")
-                .unwrap_or_else(|_| "300".into())
-                .parse()
-                .unwrap_or(300),
+            comfyui_output_dir: env.get("COMFYUI_OUTPUT_DIR").cloned().unwrap_or_else(|| "/workspace/ComfyUI/output".into()),
+            video_ttl_minutes: parse_u64("VIDEO_TTL_MINUTES", 10)?,
+            cleanup_check_interval: parse_u64("CLEANUP_CHECK_INTERVAL", 300)?,
+            rabbitmq,
+            completion_auth,
+            worker_state: WorkerStateConfig {
+                db_path: env.get("VIDEOGEN_STATE_DB_PATH").cloned().unwrap_or_else(|| "/workspace/videogen-worker/state.db".into()),
+            },
+            upload: UploadConfig {
+                refresh_margin_secs: parse_u64("VIDEOGEN_VAST_UPLOAD_EXPIRY_REFRESH_MARGIN_SECS", 300)? as i64,
+                upload_timeout_secs: parse_u64("VIDEOGEN_BUCKET_UPLOAD_TIMEOUT_SECS", 300)?,
+                cleanup_after_upload: parse_bool("VIDEOGEN_CLEANUP_AFTER_UPLOAD", true),
+                multipart_field_name: env.get("VIDEOGEN_BUCKET_UPLOAD_MULTIPART_FIELD").cloned().unwrap_or_else(|| "file".into()),
+            },
+            outbox: OutboxConfig {
+                initial_backoff_secs: parse_u64("VIDEOGEN_COMPLETION_OUTBOX_INITIAL_BACKOFF_SECS", 10)?,
+                max_backoff_secs: parse_u64("VIDEOGEN_COMPLETION_OUTBOX_MAX_BACKOFF_SECS", 120)?,
+                max_attempts: parse_u64("VIDEOGEN_COMPLETION_OUTBOX_MAX_ATTEMPTS", 10)? as u32,
+                timeout_secs: parse_u64("VIDEOGEN_COMPLETION_TIMEOUT_SECS", 30)?,
+                retention_hours: parse_u64("VIDEOGEN_VAST_OUTBOX_RETENTION_HOURS", 72)?,
+            },
+            generation_timeout_secs,
+            staged_input_ttl_hours,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    type TestEnv = HashMap<String, String>;
+
+    fn env(pairs: &[(&str, &str)]) -> TestEnv {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn rabbitmq_disabled_by_default() {
+        let cfg = AppConfig::from_env_map(&TestEnv::default()).unwrap();
+        assert!(!cfg.rabbitmq.enabled);
+    }
+
+    #[test]
+    fn rabbitmq_enabled_requires_urls_queue_and_hmac_key() {
+        let e = env(&[("VIDEOGEN_RABBITMQ_ENABLED", "true"), ("VIDEOGEN_RABBITMQ_QUEUE", "videogen.ltx.generate")]);
+        let err = AppConfig::from_env_map(&e).unwrap_err().to_string();
+        assert!(err.contains("VIDEOGEN_RABBITMQ_AMQPS_URLS"));
+    }
+
+    #[test]
+    fn parses_rabbitmq_and_outbox_defaults() {
+        let e = env(&[
+            ("VIDEOGEN_RABBITMQ_ENABLED", "true"),
+            ("VIDEOGEN_RABBITMQ_AMQPS_URLS", "amqps://user:pass@94.130.13.115:5671/%2Fvideogen"),
+            ("VIDEOGEN_RABBITMQ_QUEUE", "videogen.ltx.generate"),
+            ("PRAKASH_COMPLETION_HMAC_KEY_ID", "v1"),
+            ("PRAKASH_COMPLETION_HMAC_SECRET_B64", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+        ]);
+        let cfg = AppConfig::from_env_map(&e).unwrap();
+        assert!(cfg.rabbitmq.enabled);
+        assert_eq!(cfg.rabbitmq.prefetch, 1);
+        assert_eq!(cfg.upload.refresh_margin_secs, 300);
+        assert_eq!(cfg.outbox.max_attempts, 10);
+        assert_eq!(cfg.generation_timeout_secs, 1800);
+        assert_eq!(cfg.staged_input_ttl_hours, 24);
     }
 }
