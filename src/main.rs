@@ -6,6 +6,7 @@ use tracing::info;
 mod auth;
 mod backend;
 mod cleanup;
+mod completion;
 mod config;
 mod jobs;
 mod rabbitmq;
