@@ -26,8 +26,14 @@ services:
       RUST_LOG: "${RUST_LOG:-info,videogen_worker=debug}"
       VIDEO_TTL_MINUTES: "${VIDEO_TTL_MINUTES:-10}"
       CLEANUP_CHECK_INTERVAL: "${CLEANUP_CHECK_INTERVAL:-300}"
+      VIDEOGEN_RABBITMQ_ENABLED: "${VIDEOGEN_RABBITMQ_ENABLED:-false}"
+      VIDEOGEN_RABBITMQ_AMQPS_URLS: "${VIDEOGEN_RABBITMQ_AMQPS_URLS:-}"
+      VIDEOGEN_STATE_DB_PATH: "${VIDEOGEN_STATE_DB_PATH:-/workspace/videogen-worker/state.db}"
+      PRAKASH_COMPLETION_HMAC_KEY_ID: "${PRAKASH_COMPLETION_HMAC_KEY_ID:-}"
+      PRAKASH_COMPLETION_HMAC_SECRET_B64: "${PRAKASH_COMPLETION_HMAC_SECRET_B64:-}"
     volumes:
       - comfyui_output:/workspace/ComfyUI/output
+      - videogen_state:/workspace/videogen-worker
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:18288/health"]
       interval: 30s
@@ -59,3 +65,4 @@ services:
 volumes:
   comfyui_output:
   beszel_agent_data:
+  videogen_state:

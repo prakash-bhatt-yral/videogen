@@ -119,6 +119,72 @@ ssh -p <PORT> root@<IP> "AUTH_TOKEN=xxx CF_TUNNEL_TOKEN=yyy bash /workspace/star
 | `SENTRY_DSN` | *(none)* | Sentry error reporting |
 | `CF_TUNNEL_TOKEN` | *(none)* | Cloudflare named tunnel token |
 
+## RabbitMQ Consumer Mode
+
+Production video generation uses RabbitMQ as the job source. Enable it by setting `VIDEOGEN_RABBITMQ_ENABLED=true`. When enabled, the worker consumes jobs from the configured queue instead of waiting for HTTP `/generate` requests.
+
+### Mode summary
+
+| Mode | Purpose |
+|------|---------|
+| RabbitMQ consumer (`VIDEOGEN_RABBITMQ_ENABLED=true`) | Production — all new jobs arrive via queue |
+| HTTP `POST /generate` | Rollback / manual testing only |
+| off-chain-agent integration | Legacy drain only — migrated jobs must NOT use it |
+
+### Required env vars (RabbitMQ mode)
+
+| Env Var | Description |
+|---------|-------------|
+| `VIDEOGEN_RABBITMQ_AMQPS_URLS` | Comma-separated AMQPS broker URLs (include credentials) |
+| `VIDEOGEN_RABBITMQ_QUEUE` | Queue name (default: `videogen.ltx.generate`) |
+| `VIDEOGEN_RABBITMQ_PREFETCH` | Per-consumer prefetch count (default: `1`) |
+| `VIDEOGEN_RABBITMQ_CONCURRENCY` | Parallel job workers (default: `1`) |
+| `VIDEOGEN_RABBITMQ_TLS_CA_CERT_PEM_B64` | Base64-encoded CA cert PEM for TLS verification (optional) |
+| `VIDEOGEN_STATE_DB_PATH` | SQLite state DB path (default: `/workspace/videogen-worker/state.db`) |
+| `PRAKASH_COMPLETION_HMAC_KEY_ID` | HMAC key ID used to sign completion callbacks to Prakash |
+| `PRAKASH_COMPLETION_HMAC_SECRET_B64` | Base64-encoded HMAC secret for completion callbacks |
+
+### Job protocol
+
+- `bucket_url` is pre-computed by Prakash and included in the job message — the worker does not construct it.
+- Upload uses `POST` multipart/form-data with field name `file` (configurable via `VIDEOGEN_BUCKET_UPLOAD_MULTIPART_FIELD`).
+- Local output file is deleted after a successful upload is persisted to the outbox.
+
+### State DB
+
+The worker persists job state and the completion outbox to a SQLite database at `VIDEOGEN_STATE_DB_PATH` (default `/workspace/videogen-worker/state.db`). The parent directory is created automatically by `deploy/start.sh`. In Docker, a named volume (`videogen_state`) is mounted at `/workspace/videogen-worker`.
+
+### Health check
+
+`GET /health` returns a JSON object that includes `rabbitmq.status` when consumer mode is active. Credentials are never included in health output.
+
+### Additional tuning env vars
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `VIDEOGEN_VAST_UPLOAD_EXPIRY_REFRESH_MARGIN_SECS` | `300` | Seconds before expiry to refresh upload URL |
+| `VIDEOGEN_BUCKET_UPLOAD_TIMEOUT_SECS` | `300` | Upload HTTP timeout |
+| `VIDEOGEN_LTX_GENERATION_TIMEOUT_SECS` | `1800` | Max time to wait for LTX generation |
+| `VIDEOGEN_COMPLETION_OUTBOX_INITIAL_BACKOFF_SECS` | `10` | Initial retry backoff for completion callbacks |
+| `VIDEOGEN_COMPLETION_OUTBOX_MAX_BACKOFF_SECS` | `120` | Maximum retry backoff |
+| `VIDEOGEN_COMPLETION_OUTBOX_MAX_ATTEMPTS` | `10` | Max completion callback attempts |
+| `VIDEOGEN_COMPLETION_TIMEOUT_SECS` | `30` | HTTP timeout for completion callbacks |
+| `VIDEOGEN_VAST_OUTBOX_RETENTION_HOURS` | `72` | Hours to retain completed outbox entries |
+| `VIDEOGEN_VAST_STAGED_IMAGE_TTL_HOURS` | `24` | Hours before staged images are pruned |
+
+### GitHub Secrets (for deploy workflow)
+
+Add these secrets to the repository to enable RabbitMQ mode in CI/CD:
+
+| Secret | Description |
+|--------|-------------|
+| `VIDEOGEN_RABBITMQ_AMQPS_URLS` | AMQPS broker URL(s) with credentials |
+| `VIDEOGEN_RABBITMQ_TLS_CA_CERT_PEM_B64` | Base64 CA cert PEM (if using custom CA) |
+| `PRAKASH_COMPLETION_HMAC_KEY_ID` | HMAC key ID for completion callbacks |
+| `PRAKASH_COMPLETION_HMAC_SECRET_B64` | HMAC secret for completion callbacks |
+
+Note: `VIDEOGEN_RABBITMQ_ENABLED` is intentionally not set in the workflow — operators set it on the target instance.
+
 ## off-chain-agent Integration
 
 Once deployed, set these static env vars on the off-chain-agent (they never change):
