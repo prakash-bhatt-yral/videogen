@@ -408,6 +408,27 @@ impl JobStore {
         Ok(())
     }
 
+    /// Fetch a single outbox row by request_id. Returns `None` if not found.
+    pub async fn outbox_by_request_id(&self, request_id: &str) -> anyhow::Result<Option<OutboxRow>> {
+        let row = sqlx::query_as::<_, (String, String, String, String, i64)>(
+            "SELECT id, request_id, callback_url, body_json, attempts
+             FROM completion_outbox
+             WHERE request_id = ?
+             LIMIT 1",
+        )
+        .bind(request_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| OutboxRow {
+            id: r.0,
+            request_id: r.1,
+            callback_url: r.2,
+            body_json: r.3,
+            attempts: r.4,
+        }))
+    }
+
     pub async fn record_staged_input(
         &self,
         request_id: &str,

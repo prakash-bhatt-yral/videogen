@@ -10,6 +10,7 @@ mod completion;
 mod config;
 mod jobs;
 mod rabbitmq;
+mod recovery;
 mod routes;
 mod upload;
 mod webhook;
