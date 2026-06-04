@@ -1,4 +1,5 @@
 pub mod comfyui;
+pub mod stub;
 
 use anyhow::Result;
 use axum::body::Bytes;

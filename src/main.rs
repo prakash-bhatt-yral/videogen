@@ -87,6 +87,13 @@ async fn main() -> Result<()> {
             );
             Arc::new(comfyui)
         }
+        "stub" => {
+            info!(
+                "Using stub backend (output_dir={})",
+                config.comfyui_output_dir
+            );
+            Arc::new(backend::stub::StubBackend::new(&config.comfyui_output_dir))
+        }
         other => anyhow::bail!("Unknown backend type: {other}"),
     };
 
@@ -139,16 +146,15 @@ async fn main() -> Result<()> {
             crate::recovery::run_outbox_loop(outbox_store, outbox_client).await;
         });
 
-        // Build runtime worker
-        let worker_backend: Arc<dyn crate::worker::WorkerBackend> = {
-            // Downcast is not possible on trait objects; instead we re-construct
-            // ComfyUIBackend for the worker path (separate from the HTTP backend).
-            // This is safe: both share no in-memory state that would cause conflicts.
-            let w: Arc<dyn crate::worker::WorkerBackend> = Arc::new(
-                backend::comfyui::ComfyUIBackend::new(&config.comfyui_host, config.comfyui_port),
-            );
-            w
-        };
+        // Build runtime worker backend
+        let worker_backend: Arc<dyn crate::worker::WorkerBackend> =
+            match config.backend_type.as_str() {
+                "stub" => Arc::new(backend::stub::StubBackend::new(&config.comfyui_output_dir)),
+                _ => Arc::new(backend::comfyui::ComfyUIBackend::new(
+                    &config.comfyui_host,
+                    config.comfyui_port,
+                )),
+            };
 
         let real_worker = Arc::new(crate::worker::RuntimeDeliveryWorker {
             store: Arc::clone(&store),
