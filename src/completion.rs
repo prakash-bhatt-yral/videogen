@@ -13,15 +13,24 @@ pub struct CompletionHmacKey {
 }
 
 impl CompletionHmacKey {
+    /// Build key from a raw string (e.g. AUTH_TOKEN). Uses the string bytes directly.
+    pub fn from_str(key_id: &str, secret: &str) -> anyhow::Result<Self> {
+        if secret.is_empty() {
+            return Err(anyhow::anyhow!("HMAC secret must not be empty"));
+        }
+        Ok(Self {
+            key_id: key_id.to_string(),
+            secret: secret.as_bytes().to_vec(),
+        })
+    }
+
+    /// Build key from a base64-encoded secret (kept for compatibility).
     pub fn from_base64(key_id: &str, secret_b64: &str) -> anyhow::Result<Self> {
         let secret = base64::engine::general_purpose::STANDARD
             .decode(secret_b64)
             .map_err(|_| anyhow::anyhow!("HMAC secret is not valid base64"))?;
-        if secret.len() != 32 {
-            return Err(anyhow::anyhow!(
-                "HMAC secret must decode to exactly 32 bytes, got {}",
-                secret.len()
-            ));
+        if secret.is_empty() {
+            return Err(anyhow::anyhow!("HMAC secret must not be empty"));
         }
         Ok(Self {
             key_id: key_id.to_string(),
@@ -276,8 +285,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_32_byte_hmac_secret() {
-        let err = CompletionHmacKey::from_base64("v1", "AA==").unwrap_err();
-        assert!(err.to_string().contains("32 bytes"));
+    fn from_str_uses_raw_bytes_as_key() {
+        let key = CompletionHmacKey::from_str("v1", "my-auth-token").unwrap();
+        assert_eq!(key.key_id, "v1");
+    }
+
+    #[test]
+    fn rejects_empty_secret() {
+        assert!(CompletionHmacKey::from_str("v1", "").is_err());
     }
 }

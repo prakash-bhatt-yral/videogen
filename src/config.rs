@@ -13,7 +13,7 @@ pub struct RabbitMqConfig {
 #[derive(Clone, Debug)]
 pub struct CompletionAuthConfig {
     pub key_id: String,
-    pub secret_b64: String,
+    pub secret: String,
 }
 
 #[derive(Clone, Debug)]
@@ -93,24 +93,8 @@ impl AppConfig {
                     "VIDEOGEN_RABBITMQ_CONSUMER_PASSWORD or VIDEOGEN_RABBITMQ_AMQPS_URLS is required when VIDEOGEN_RABBITMQ_ENABLED=true"
                 ));
             }
-            if get("VIDEOGEN_CALLBACK_SIGNING_KEY_ID").is_empty() {
-                return Err(anyhow::anyhow!("VIDEOGEN_CALLBACK_SIGNING_KEY_ID is required when VIDEOGEN_RABBITMQ_ENABLED=true"));
-            }
-            if get("VIDEOGEN_CALLBACK_SIGNING_SECRET_B64").is_empty() {
-                return Err(anyhow::anyhow!("VIDEOGEN_CALLBACK_SIGNING_SECRET_B64 is required when VIDEOGEN_RABBITMQ_ENABLED=true"));
-            }
-            let secret = get("VIDEOGEN_CALLBACK_SIGNING_SECRET_B64");
-            use base64::Engine;
-            let decoded = base64::engine::general_purpose::STANDARD
-                .decode(secret)
-                .map_err(|_| {
-                    anyhow::anyhow!("VIDEOGEN_CALLBACK_SIGNING_SECRET_B64 is not valid base64")
-                })?;
-            if decoded.len() != 32 {
-                return Err(anyhow::anyhow!(
-                    "VIDEOGEN_CALLBACK_SIGNING_SECRET_B64 must decode to exactly 32 bytes, got {}",
-                    decoded.len()
-                ));
+            if get("AUTH_TOKEN").is_empty() {
+                return Err(anyhow::anyhow!("AUTH_TOKEN is required when VIDEOGEN_RABBITMQ_ENABLED=true (used as HMAC signing secret)"));
             }
         }
 
@@ -143,8 +127,11 @@ impl AppConfig {
 
         let completion_auth = if rabbitmq_enabled {
             Some(CompletionAuthConfig {
-                key_id: get("VIDEOGEN_CALLBACK_SIGNING_KEY_ID").to_string(),
-                secret_b64: get("VIDEOGEN_CALLBACK_SIGNING_SECRET_B64").to_string(),
+                key_id: env
+                    .get("VIDEOGEN_CALLBACK_SIGNING_KEY_ID")
+                    .cloned()
+                    .unwrap_or_else(|| "v1".to_string()),
+                secret: get("AUTH_TOKEN").to_string(),
             })
         } else {
             None
@@ -244,11 +231,7 @@ mod tests {
                 "amqps://user:pass@94.130.13.115:5671/%2Fvideogen",
             ),
             ("VIDEOGEN_RABBITMQ_QUEUE", "videogen.ltx.generate"),
-            ("VIDEOGEN_CALLBACK_SIGNING_KEY_ID", "v1"),
-            (
-                "VIDEOGEN_CALLBACK_SIGNING_SECRET_B64",
-                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-            ),
+            ("AUTH_TOKEN", "my-test-auth-token"),
         ]);
         let cfg = AppConfig::from_env_map(&e).unwrap();
         assert!(cfg.rabbitmq.enabled);

@@ -118,7 +118,7 @@ async fn main() -> Result<()> {
             anyhow::anyhow!("VIDEOGEN_CALLBACK_SIGNING_KEY_ID required when rabbitmq enabled")
         })?;
         let hmac_key =
-            crate::completion::CompletionHmacKey::from_base64(&auth.key_id, &auth.secret_b64)?;
+            crate::completion::CompletionHmacKey::from_str(&auth.key_id, &auth.secret)?;
         let prakash_client: Arc<dyn crate::completion::PrakashCompletionClient> =
             Arc::new(crate::completion::HmacPrakashClient::new(hmac_key));
 
