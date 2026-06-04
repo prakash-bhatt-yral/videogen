@@ -127,7 +127,7 @@ async fn main() -> Result<()> {
     // Wire RabbitMQ consumer + outbox runner when enabled
     if config.rabbitmq.enabled {
         let auth = config.completion_auth.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("PRAKASH_COMPLETION_HMAC_KEY_ID required when rabbitmq enabled")
+            anyhow::anyhow!("VIDEOGEN_CALLBACK_SIGNING_KEY_ID required when rabbitmq enabled")
         })?;
         let hmac_key =
             crate::completion::CompletionHmacKey::from_base64(&auth.key_id, &auth.secret_b64)?;
