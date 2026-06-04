@@ -57,6 +57,7 @@ supervisorctl stop api-wrapper 2>/dev/null || true
 # RabbitMQ consumer mode (optional, disabled by default)
 # =============================================================================
 export VIDEOGEN_RABBITMQ_ENABLED="${VIDEOGEN_RABBITMQ_ENABLED:-false}"
+export VIDEOGEN_RABBITMQ_CONSUMER_PASSWORD="${VIDEOGEN_RABBITMQ_CONSUMER_PASSWORD:-}"
 export VIDEOGEN_RABBITMQ_AMQPS_URLS="${VIDEOGEN_RABBITMQ_AMQPS_URLS:-}"
 export VIDEOGEN_RABBITMQ_QUEUE="${VIDEOGEN_RABBITMQ_QUEUE:-videogen.ltx.generate}"
 export VIDEOGEN_RABBITMQ_PREFETCH="${VIDEOGEN_RABBITMQ_PREFETCH:-1}"

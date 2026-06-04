@@ -104,9 +104,11 @@ impl AppConfig {
         let rabbitmq_enabled = parse_bool("VIDEOGEN_RABBITMQ_ENABLED", false);
 
         if rabbitmq_enabled {
-            if get("VIDEOGEN_RABBITMQ_AMQPS_URLS").is_empty() {
+            if get("VIDEOGEN_RABBITMQ_CONSUMER_PASSWORD").is_empty()
+                && get("VIDEOGEN_RABBITMQ_AMQPS_URLS").is_empty()
+            {
                 return Err(anyhow::anyhow!(
-                    "VIDEOGEN_RABBITMQ_AMQPS_URLS is required when VIDEOGEN_RABBITMQ_ENABLED=true"
+                    "VIDEOGEN_RABBITMQ_CONSUMER_PASSWORD or VIDEOGEN_RABBITMQ_AMQPS_URLS is required when VIDEOGEN_RABBITMQ_ENABLED=true"
                 ));
             }
             if get("VIDEOGEN_CALLBACK_SIGNING_KEY_ID").is_empty() {
@@ -132,11 +134,22 @@ impl AppConfig {
 
         let rabbitmq = RabbitMqConfig {
             enabled: rabbitmq_enabled,
-            amqps_urls: get("VIDEOGEN_RABBITMQ_AMQPS_URLS")
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect(),
+            amqps_urls: {
+                let password = get("VIDEOGEN_RABBITMQ_CONSUMER_PASSWORD");
+                if !password.is_empty() {
+                    vec![
+                        format!("amqps://vast_ltx_consumer:{password}@94.130.13.115:5671/%2Fvideogen"),
+                        format!("amqps://vast_ltx_consumer:{password}@88.99.151.102:5671/%2Fvideogen"),
+                        format!("amqps://vast_ltx_consumer:{password}@138.201.129.173:5671/%2Fvideogen"),
+                    ]
+                } else {
+                    get("VIDEOGEN_RABBITMQ_AMQPS_URLS")
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                }
+            },
             queue: env
                 .get("VIDEOGEN_RABBITMQ_QUEUE")
                 .cloned()
@@ -256,13 +269,16 @@ mod tests {
     }
 
     #[test]
-    fn rabbitmq_enabled_requires_urls_queue_and_hmac_key() {
+    fn rabbitmq_enabled_requires_password_or_urls_and_hmac_key() {
         let e = env(&[
             ("VIDEOGEN_RABBITMQ_ENABLED", "true"),
             ("VIDEOGEN_RABBITMQ_QUEUE", "videogen.ltx.generate"),
         ]);
         let err = AppConfig::from_env_map(&e).unwrap_err().to_string();
-        assert!(err.contains("VIDEOGEN_RABBITMQ_AMQPS_URLS"));
+        assert!(
+            err.contains("VIDEOGEN_RABBITMQ_CONSUMER_PASSWORD")
+                || err.contains("VIDEOGEN_RABBITMQ_AMQPS_URLS")
+        );
     }
 
     #[test]
