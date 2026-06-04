@@ -46,9 +46,7 @@ pub async fn run_one_outbox_attempt(
                     status = code,
                     "completion accepted — marking terminal"
                 );
-                store
-                    .mark_completion_sent(&row.id, code as i64)
-                    .await?;
+                store.mark_completion_sent(&row.id, code as i64).await?;
             }
             crate::completion::CompletionDeliveryResult::NonRetryable(reason) => {
                 tracing::error!(
@@ -90,7 +88,7 @@ pub async fn run_outbox_loop(store: Arc<JobStore>, client: Arc<dyn PrakashComple
 mod tests {
     use super::*;
     use crate::completion::{
-        CompletionDeliveryResult, CompleteVideoRequest, PrakashCompletionClient,
+        CompleteVideoRequest, CompletionDeliveryResult, PrakashCompletionClient,
         UploadRefreshRequest, UploadRefreshResponse,
     };
     use crate::jobs::{JobStore, OutboxEntry};

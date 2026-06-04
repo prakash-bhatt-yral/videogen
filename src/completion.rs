@@ -239,10 +239,7 @@ impl PrakashCompletionClient for HmacPrakashClient {
     ) -> anyhow::Result<UploadRefreshResponse> {
         let resp = self.post_signed(url, body).await?;
         if !resp.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "upload refresh failed: {}",
-                resp.status()
-            ));
+            return Err(anyhow::anyhow!("upload refresh failed: {}", resp.status()));
         }
         Ok(resp.json::<UploadRefreshResponse>().await?)
     }
@@ -256,11 +253,9 @@ mod tests {
 
     #[test]
     fn signs_prakash_hmac_message() {
-        let key = CompletionHmacKey::from_base64(
-            "v1",
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-        )
-        .unwrap();
+        let key =
+            CompletionHmacKey::from_base64("v1", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+                .unwrap();
         let body = br#"{"status":"success"}"#;
         let signed = sign_prakash_request(
             "POST",

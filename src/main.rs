@@ -144,11 +144,9 @@ async fn main() -> Result<()> {
             // Downcast is not possible on trait objects; instead we re-construct
             // ComfyUIBackend for the worker path (separate from the HTTP backend).
             // This is safe: both share no in-memory state that would cause conflicts.
-            let w: Arc<dyn crate::worker::WorkerBackend> =
-                Arc::new(backend::comfyui::ComfyUIBackend::new(
-                    &config.comfyui_host,
-                    config.comfyui_port,
-                ));
+            let w: Arc<dyn crate::worker::WorkerBackend> = Arc::new(
+                backend::comfyui::ComfyUIBackend::new(&config.comfyui_host, config.comfyui_port),
+            );
             w
         };
 

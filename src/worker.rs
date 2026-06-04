@@ -68,32 +68,29 @@ pub async fn run_prakash_job(
     let _ = store.claim_received(&job).await;
 
     // ── Submit ────────────────────────────────────────────────────────────────
-    let accepted =
-        match backend
-            .submit_workflow(&job.request_id, job.workflow_json.clone())
-            .await
-        {
-            Ok(a) => {
-                store
-                    .mark_accepted(&job.request_id, &a.prompt_id, &a.client_id)
-                    .await?;
-                a
-            }
-            Err(e) => {
-                store.mark_failed(&job.request_id, &e.to_string()).await?;
-                enqueue_failure_completion(store, &job, &e.to_string(), client).await?;
-                return Ok(());
-            }
-        };
+    let accepted = match backend
+        .submit_workflow(&job.request_id, job.workflow_json.clone())
+        .await
+    {
+        Ok(a) => {
+            store
+                .mark_accepted(&job.request_id, &a.prompt_id, &a.client_id)
+                .await?;
+            a
+        }
+        Err(e) => {
+            store.mark_failed(&job.request_id, &e.to_string()).await?;
+            enqueue_failure_completion(store, &job, &e.to_string(), client).await?;
+            return Ok(());
+        }
+    };
 
     // ── Monitor ───────────────────────────────────────────────────────────────
     let generated = match backend.monitor_generation(&accepted, 1800).await {
         Ok(g) => {
             let outputs_json =
                 serde_json::to_string(&g.outputs).unwrap_or_else(|_| "[]".to_string());
-            store
-                .mark_generated(&job.request_id, &outputs_json)
-                .await?;
+            store.mark_generated(&job.request_id, &outputs_json).await?;
             g
         }
         Err(e) => {
@@ -128,8 +125,7 @@ pub async fn run_prakash_job(
     store.mark_uploading(&job.request_id).await?;
     let uploaded = match uploader.upload(&job, &local_path).await {
         Ok(u) => {
-            let uploaded_json =
-                serde_json::to_string(&u).unwrap_or_else(|_| "{}".to_string());
+            let uploaded_json = serde_json::to_string(&u).unwrap_or_else(|_| "{}".to_string());
             store
                 .mark_uploaded(
                     &job.request_id,
@@ -248,10 +244,7 @@ pub struct RuntimeDeliveryWorker {
 
 #[async_trait::async_trait]
 impl crate::rabbitmq::consumer::DeliveryWorker for RuntimeDeliveryWorker {
-    async fn accept(
-        &self,
-        job: PrakashVideoJob,
-    ) -> crate::rabbitmq::consumer::WorkerDecision {
+    async fn accept(&self, job: PrakashVideoJob) -> crate::rabbitmq::consumer::WorkerDecision {
         match accept_prakash_job(&self.store, self.backend.as_ref(), job).await {
             Ok(_) => crate::rabbitmq::consumer::WorkerDecision::Accepted,
             Err(e) => {

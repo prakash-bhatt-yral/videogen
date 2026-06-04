@@ -109,7 +109,10 @@ pub async fn spawn_consumer(
     worker: Arc<dyn DeliveryWorker>,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
     use lapin::{
-        options::{BasicAckOptions, BasicConsumeOptions, BasicNackOptions, BasicQosOptions, BasicRejectOptions},
+        options::{
+            BasicAckOptions, BasicConsumeOptions, BasicNackOptions, BasicQosOptions,
+            BasicRejectOptions,
+        },
         types::FieldTable,
         Connection, ConnectionProperties,
     };
@@ -151,21 +154,37 @@ pub async fn spawn_consumer(
             };
 
             let props = DeliveryProperties {
-                message_id: delivery.properties.message_id().as_ref().map(|s| s.to_string()),
-                correlation_id: delivery.properties.correlation_id().as_ref().map(|s| s.to_string()),
-                content_type: delivery.properties.content_type().as_ref().map(|s| s.to_string()),
+                message_id: delivery
+                    .properties
+                    .message_id()
+                    .as_ref()
+                    .map(|s| s.to_string()),
+                correlation_id: delivery
+                    .properties
+                    .correlation_id()
+                    .as_ref()
+                    .map(|s| s.to_string()),
+                content_type: delivery
+                    .properties
+                    .content_type()
+                    .as_ref()
+                    .map(|s| s.to_string()),
             };
 
             let decision = handle_delivery(&delivery.data, props, worker.as_ref()).await;
 
             let tag = delivery.delivery_tag;
             let ack_result = match decision {
-                DeliveryDecision::Ack => {
-                    channel.basic_ack(tag, BasicAckOptions::default()).await
-                }
+                DeliveryDecision::Ack => channel.basic_ack(tag, BasicAckOptions::default()).await,
                 DeliveryDecision::NackRequeue => {
                     channel
-                        .basic_nack(tag, BasicNackOptions { requeue: true, ..Default::default() })
+                        .basic_nack(
+                            tag,
+                            BasicNackOptions {
+                                requeue: true,
+                                ..Default::default()
+                            },
+                        )
                         .await
                 }
                 DeliveryDecision::RejectNoRequeue => {
@@ -247,8 +266,7 @@ mod tests {
             }
         }
         fn failure_outbox_count(&self) -> u32 {
-            self.failure_count
-                .load(std::sync::atomic::Ordering::SeqCst)
+            self.failure_count.load(std::sync::atomic::Ordering::SeqCst)
         }
     }
 

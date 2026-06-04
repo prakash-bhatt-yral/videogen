@@ -136,8 +136,8 @@ impl JobStore {
     pub async fn open(path: &str) -> anyhow::Result<Self> {
         use sqlx::sqlite::SqliteConnectOptions;
         use std::str::FromStr;
-        let opts = SqliteConnectOptions::from_str(&format!("sqlite:{path}"))?
-            .create_if_missing(true);
+        let opts =
+            SqliteConnectOptions::from_str(&format!("sqlite:{path}"))?.create_if_missing(true);
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .connect_with(opts)
             .await?;
@@ -243,18 +243,16 @@ impl JobStore {
     }
 
     pub async fn record_outbox_retry(&self, outbox_id: &str, error: &str) -> anyhow::Result<()> {
-        let row = sqlx::query_as::<_, (i64,)>(
-            "SELECT attempts FROM completion_outbox WHERE id = ?",
-        )
-        .bind(outbox_id)
-        .fetch_one(&self.pool)
-        .await?;
+        let row =
+            sqlx::query_as::<_, (i64,)>("SELECT attempts FROM completion_outbox WHERE id = ?")
+                .bind(outbox_id)
+                .fetch_one(&self.pool)
+                .await?;
 
         let attempts = row.0 + 1;
         let backoff_secs = (10u64 * 2u64.pow(attempts as u32)).min(120);
-        let next_attempt_at = (chrono::Utc::now()
-            + chrono::Duration::seconds(backoff_secs as i64))
-        .to_rfc3339();
+        let next_attempt_at =
+            (chrono::Utc::now() + chrono::Duration::seconds(backoff_secs as i64)).to_rfc3339();
         let now = chrono::Utc::now().to_rfc3339();
 
         sqlx::query(
@@ -393,7 +391,11 @@ impl JobStore {
         Ok(())
     }
 
-    pub async fn mark_completion_failed(&self, outbox_id: &str, reason: &str) -> anyhow::Result<()> {
+    pub async fn mark_completion_failed(
+        &self,
+        outbox_id: &str,
+        reason: &str,
+    ) -> anyhow::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         sqlx::query(
             "UPDATE completion_outbox
@@ -409,7 +411,10 @@ impl JobStore {
     }
 
     /// Fetch a single outbox row by request_id. Returns `None` if not found.
-    pub async fn outbox_by_request_id(&self, request_id: &str) -> anyhow::Result<Option<OutboxRow>> {
+    pub async fn outbox_by_request_id(
+        &self,
+        request_id: &str,
+    ) -> anyhow::Result<Option<OutboxRow>> {
         let row = sqlx::query_as::<_, (String, String, String, String, i64)>(
             "SELECT id, request_id, callback_url, body_json, attempts
              FROM completion_outbox
@@ -500,7 +505,8 @@ mod tests {
     use crate::rabbitmq::types::{PrakashVideoJob, RequestKey, UploadDestination};
 
     fn sample_job() -> PrakashVideoJob {
-        serde_json::from_str(r#"{
+        serde_json::from_str(
+            r#"{
             "request_id": "11111111-1111-4111-8111-111111111111",
             "request_key": { "principal": "aaaaa-aa", "counter": 17 },
             "user_principal": "aaaaa-aa",
@@ -515,7 +521,9 @@ mod tests {
                 "expires_at": "2026-06-03T12:00:00Z",
                 "bucket_url": "https://bucket.example/videos/video-1.mp4"
             }
-        }"#).unwrap()
+        }"#,
+        )
+        .unwrap()
     }
 
     fn sample_success_completion() -> OutboxEntry {

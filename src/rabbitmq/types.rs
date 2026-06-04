@@ -58,7 +58,10 @@ impl std::fmt::Debug for UploadDestination {
             .field("object_key", &self.object_key)
             .field("upload_url", &"<redacted>")
             .field("expires_at", &self.expires_at)
-            .field("bucket_url", &self.bucket_url.as_ref().map(|_| "<redacted>"))
+            .field(
+                "bucket_url",
+                &self.bucket_url.as_ref().map(|_| "<redacted>"),
+            )
             .finish()
     }
 }
@@ -116,7 +119,8 @@ mod tests {
     use super::*;
 
     fn sample_job() -> PrakashVideoJob {
-        serde_json::from_str(r#"{
+        serde_json::from_str(
+            r#"{
             "request_id": "11111111-1111-4111-8111-111111111111",
             "request_key": { "principal": "aaaaa-aa", "counter": 17 },
             "user_principal": "aaaaa-aa",
@@ -132,7 +136,9 @@ mod tests {
                 "expires_at": "2026-06-03T12:00:00Z",
                 "bucket_url": "https://bucket.example/videos/video-1.mp4"
             }
-        }"#).unwrap()
+        }"#,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -141,14 +147,21 @@ mod tests {
         assert_eq!(job.request_id, "11111111-1111-4111-8111-111111111111");
         assert_eq!(job.request_key.counter, 17);
         assert_eq!(job.upload_destination.object_key, "videos/video-1.mp4");
-        assert_eq!(job.upload_destination.bucket_url, Some("https://bucket.example/videos/video-1.mp4".to_string()));
+        assert_eq!(
+            job.upload_destination.bucket_url,
+            Some("https://bucket.example/videos/video-1.mp4".to_string())
+        );
     }
 
     #[test]
     fn rejects_principal_mismatch() {
         let mut job = sample_job();
         job.user_principal = "bbbbb-bb".to_string();
-        assert!(job.validate().unwrap_err().to_string().contains("principal"));
+        assert!(job
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("principal"));
     }
 
     #[test]
@@ -168,7 +181,11 @@ mod tests {
             }
         }"#;
         let job: PrakashVideoJob = serde_json::from_str(raw).unwrap();
-        assert!(job.validate().unwrap_err().to_string().contains("bucket_url"));
+        assert!(job
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("bucket_url"));
     }
 
     #[test]

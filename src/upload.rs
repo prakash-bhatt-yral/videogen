@@ -1,19 +1,27 @@
-use std::path::{Path, PathBuf};
-use chrono::{DateTime, Utc};
-use anyhow::{anyhow, Result};
-use sha2::{Digest, Sha256};
-use crate::webhook::OutputFile;
 use crate::rabbitmq::types::UploadDestination;
+use crate::webhook::OutputFile;
+use anyhow::{anyhow, Result};
+use chrono::{DateTime, Utc};
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
 
 // ─── Output selection ──────────────────────────────────────────────────────
 
 pub fn select_primary_video_output(outputs: &[OutputFile]) -> Result<&OutputFile> {
     let video_exts = [".mp4", ".webm", ".mov"];
-    if let Some(o) = outputs.iter().find(|o| o.output_type.as_deref() == Some("videos")) {
+    if let Some(o) = outputs
+        .iter()
+        .find(|o| o.output_type.as_deref() == Some("videos"))
+    {
         return Ok(o);
     }
-    outputs.iter()
-        .find(|o| video_exts.iter().any(|ext| o.filename.to_lowercase().ends_with(ext)))
+    outputs
+        .iter()
+        .find(|o| {
+            video_exts
+                .iter()
+                .any(|ext| o.filename.to_lowercase().ends_with(ext))
+        })
         .ok_or_else(|| anyhow!("no video output found among {} files", outputs.len()))
 }
 
@@ -35,9 +43,12 @@ pub fn resolve_comfy_output_path(output_dir: &str, output: &OutputFile) -> Resul
     }
     path.push(&output.filename);
 
-    let base = std::fs::canonicalize(output_dir)
-        .unwrap_or_else(|_| PathBuf::from(output_dir));
-    let resolved = if path.is_absolute() { path.clone() } else { base.join(&path) };
+    let base = std::fs::canonicalize(output_dir).unwrap_or_else(|_| PathBuf::from(output_dir));
+    let resolved = if path.is_absolute() {
+        path.clone()
+    } else {
+        base.join(&path)
+    };
     let resolved_str = resolved.to_string_lossy();
     let base_str = base.to_string_lossy();
     if !resolved_str.starts_with(base_str.as_ref()) {
@@ -67,8 +78,9 @@ pub struct UploadedVideo {
 
 impl UploadedVideo {
     pub fn require_bucket_url(&self) -> Result<&str> {
-        self.bucket_url.as_deref()
-            .ok_or_else(|| anyhow!("bucket_url is required for success completion but was absent in Prakash job"))
+        self.bucket_url.as_deref().ok_or_else(|| {
+            anyhow!("bucket_url is required for success completion but was absent in Prakash job")
+        })
     }
 }
 
@@ -101,7 +113,8 @@ pub async fn upload_video(
     let file_size = video_bytes.len() as u64;
     let checksum = format!("sha256:{}", hex::encode(Sha256::digest(&video_bytes)));
 
-    let filename = local_path.file_name()
+    let filename = local_path
+        .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "video.mp4".to_string());
 
@@ -121,7 +134,10 @@ pub async fn upload_video(
     .map_err(|e| UploadError::RequestFailed(e.to_string()))?;
 
     if !resp.status().is_success() {
-        return Err(UploadError::RequestFailed(format!("upload status: {}", resp.status())));
+        return Err(UploadError::RequestFailed(format!(
+            "upload status: {}",
+            resp.status()
+        )));
     }
 
     let bucket_url = destination.bucket_url.clone();
@@ -138,14 +154,16 @@ pub async fn upload_video(
 // ─── Cleanup ──────────────────────────────────────────────────────────────
 
 pub async fn cleanup_local_output(path: &Path, output_dir: &str) -> Result<()> {
-    let base = std::fs::canonicalize(output_dir)
-        .unwrap_or_else(|_| PathBuf::from(output_dir));
+    let base = std::fs::canonicalize(output_dir).unwrap_or_else(|_| PathBuf::from(output_dir));
     let canonical = match std::fs::canonicalize(path) {
         Ok(p) => p,
         Err(_) => return Ok(()),
     };
     if !canonical.starts_with(&base) {
-        tracing::warn!("refusing to delete file outside output dir: {}", path.display());
+        tracing::warn!(
+            "refusing to delete file outside output dir: {}",
+            path.display()
+        );
         return Ok(());
     }
     if let Err(e) = tokio::fs::remove_file(path).await {
@@ -155,15 +173,18 @@ pub async fn cleanup_local_output(path: &Path, output_dir: &str) -> Result<()> {
 }
 
 pub async fn cleanup_staged_inputs(paths: &[PathBuf], allowed_dir: &Path) -> Result<()> {
-    let canonical_allowed = std::fs::canonicalize(allowed_dir)
-        .unwrap_or_else(|_| allowed_dir.to_path_buf());
+    let canonical_allowed =
+        std::fs::canonicalize(allowed_dir).unwrap_or_else(|_| allowed_dir.to_path_buf());
     for path in paths {
         let canonical = match std::fs::canonicalize(path) {
             Ok(p) => p,
             Err(_) => continue,
         };
         if !canonical.starts_with(&canonical_allowed) {
-            tracing::warn!("refusing to delete staged input outside allowed dir: {}", path.display());
+            tracing::warn!(
+                "refusing to delete staged input outside allowed dir: {}",
+                path.display()
+            );
             continue;
         }
         if let Err(e) = tokio::fs::remove_file(path).await {
@@ -195,12 +216,18 @@ mod tests {
     fn resolves_video_output_inside_comfyui_output_dir() {
         let output = video_output();
         let path = resolve_comfy_output_path("/workspace/ComfyUI/output", &output).unwrap();
-        assert_eq!(path, std::path::PathBuf::from("/workspace/ComfyUI/output/2026-06-03/video.mp4"));
+        assert_eq!(
+            path,
+            std::path::PathBuf::from("/workspace/ComfyUI/output/2026-06-03/video.mp4")
+        );
     }
 
     #[test]
     fn rejects_path_traversal_in_output_filename() {
-        let output = OutputFile { filename: "../secret".to_string(), ..video_output() };
+        let output = OutputFile {
+            filename: "../secret".to_string(),
+            ..video_output()
+        };
         assert!(resolve_comfy_output_path("/workspace/ComfyUI/output", &output).is_err());
     }
 
@@ -235,7 +262,9 @@ mod tests {
         let staged = temp.path().join("input.png");
         tokio::fs::write(&staged, b"image").await.unwrap();
 
-        cleanup_staged_inputs(&[staged.clone()], temp.path()).await.unwrap();
+        cleanup_staged_inputs(&[staged.clone()], temp.path())
+            .await
+            .unwrap();
 
         assert!(!staged.exists());
     }
