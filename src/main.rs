@@ -11,6 +11,7 @@ mod config;
 mod jobs;
 mod rabbitmq;
 mod routes;
+mod upload;
 mod webhook;
 
 use config::AppConfig;
