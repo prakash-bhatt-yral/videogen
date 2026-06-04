@@ -237,6 +237,35 @@ async fn enqueue_failure_completion(
     Ok(())
 }
 
+// ─── Runtime delivery worker ─────────────────────────────────────────────────
+
+/// Bridges the RabbitMQ `DeliveryWorker` trait to `accept_prakash_job`.
+/// Used in production to wire the consumer into the job store + ComfyUI backend.
+pub struct RuntimeDeliveryWorker {
+    pub store: std::sync::Arc<JobStore>,
+    pub backend: std::sync::Arc<dyn WorkerBackend>,
+}
+
+#[async_trait::async_trait]
+impl crate::rabbitmq::consumer::DeliveryWorker for RuntimeDeliveryWorker {
+    async fn accept(
+        &self,
+        job: PrakashVideoJob,
+    ) -> crate::rabbitmq::consumer::WorkerDecision {
+        match accept_prakash_job(&self.store, self.backend.as_ref(), job).await {
+            Ok(_) => crate::rabbitmq::consumer::WorkerDecision::Accepted,
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("duplicate") || msg.contains("AlreadyExists") {
+                    crate::rabbitmq::consumer::WorkerDecision::Duplicate
+                } else {
+                    crate::rabbitmq::consumer::WorkerDecision::TransientError(msg)
+                }
+            }
+        }
+    }
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

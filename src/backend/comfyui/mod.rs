@@ -10,7 +10,8 @@ use axum::body::Bytes;
 use tracing::{error, info};
 
 use super::{
-    GenerateRequest, GenerateResponse, HealthResponse, JobStatus, UploadResponse, VideoGenBackend,
+    AcceptedGeneration, CompletedGeneration, GenerateRequest, GenerateResponse, HealthResponse,
+    JobStatus, UploadResponse, VideoGenBackend,
 };
 use crate::webhook;
 use client::ComfyUIClient;
@@ -164,5 +165,60 @@ impl VideoGenBackend for ComfyUIBackend {
 
     fn name(&self) -> &str {
         "comfyui"
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::worker::WorkerBackend for ComfyUIBackend {
+    async fn submit_workflow(
+        &self,
+        request_id: &str,
+        workflow_json: serde_json::Value,
+    ) -> anyhow::Result<AcceptedGeneration> {
+        let client_id = uuid::Uuid::new_v4().to_string();
+        let prompt_id = self.client.queue_prompt(&workflow_json, &client_id).await?;
+
+        // Track the job in the in-memory state map
+        let job_state = JobState {
+            id: request_id.to_string(),
+            prompt_id: prompt_id.clone(),
+            status: "pending".into(),
+            progress: Some(0.0),
+            output: None,
+            message: None,
+        };
+        self.jobs
+            .write()
+            .await
+            .insert(request_id.to_string(), job_state);
+
+        Ok(AcceptedGeneration {
+            request_id: request_id.to_string(),
+            prompt_id,
+            client_id,
+        })
+    }
+
+    async fn monitor_generation(
+        &self,
+        accepted: &AcceptedGeneration,
+        timeout_secs: u64,
+    ) -> anyhow::Result<CompletedGeneration> {
+        let outputs = tokio::time::timeout(
+            std::time::Duration::from_secs(timeout_secs),
+            self.client.monitor_job(
+                &accepted.request_id,
+                &accepted.prompt_id,
+                &accepted.client_id,
+                &self.jobs,
+            ),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("generation timed out after {timeout_secs}s"))??;
+
+        Ok(CompletedGeneration {
+            prompt_id: accepted.prompt_id.clone(),
+            outputs,
+        })
     }
 }
