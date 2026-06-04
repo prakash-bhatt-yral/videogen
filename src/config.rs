@@ -17,25 +17,11 @@ pub struct CompletionAuthConfig {
 }
 
 #[derive(Clone, Debug)]
-pub struct WorkerStateConfig {
-    pub db_path: String,
-}
-
-#[derive(Clone, Debug)]
 pub struct UploadConfig {
     pub refresh_margin_secs: i64,
     pub upload_timeout_secs: u64,
     pub cleanup_after_upload: bool,
     pub multipart_field_name: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct OutboxConfig {
-    pub initial_backoff_secs: u64,
-    pub max_backoff_secs: u64,
-    pub max_attempts: u32,
-    pub timeout_secs: u64,
-    pub retention_hours: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -54,11 +40,7 @@ pub struct AppConfig {
 
     pub rabbitmq: RabbitMqConfig,
     pub completion_auth: Option<CompletionAuthConfig>,
-    pub worker_state: WorkerStateConfig,
     pub upload: UploadConfig,
-    pub outbox: OutboxConfig,
-    pub generation_timeout_secs: u64,
-    pub staged_input_ttl_hours: u64,
 }
 
 impl AppConfig {
@@ -186,16 +168,6 @@ impl AppConfig {
             (host, port)
         };
 
-        let generation_timeout_secs = parse_u64("VIDEOGEN_LTX_GENERATION_TIMEOUT_SECS", 1800)?;
-        let staged_input_ttl_hours = parse_u64("VIDEOGEN_VAST_STAGED_IMAGE_TTL_HOURS", 24)?;
-
-        let min_ttl_hours = (generation_timeout_secs as f64 / 3600.0).ceil().max(1.0) as u64;
-        if staged_input_ttl_hours < min_ttl_hours {
-            return Err(anyhow::anyhow!(
-                "VIDEOGEN_VAST_STAGED_IMAGE_TTL_HOURS ({staged_input_ttl_hours}) must be >= {min_ttl_hours} (generation_timeout / 3600 rounded up)"
-            ));
-        }
-
         Ok(Self {
             port: parse_u16("PORT", 18288)?,
             backend_type: env
@@ -214,12 +186,6 @@ impl AppConfig {
             cleanup_check_interval: parse_u64("CLEANUP_CHECK_INTERVAL", 300)?,
             rabbitmq,
             completion_auth,
-            worker_state: WorkerStateConfig {
-                db_path: env
-                    .get("VIDEOGEN_STATE_DB_PATH")
-                    .cloned()
-                    .unwrap_or_else(|| "/workspace/videogen-worker/state.db".into()),
-            },
             upload: UploadConfig {
                 refresh_margin_secs: parse_u64(
                     "VIDEOGEN_VAST_UPLOAD_EXPIRY_REFRESH_MARGIN_SECS",
@@ -232,18 +198,6 @@ impl AppConfig {
                     .cloned()
                     .unwrap_or_else(|| "file".into()),
             },
-            outbox: OutboxConfig {
-                initial_backoff_secs: parse_u64(
-                    "VIDEOGEN_COMPLETION_OUTBOX_INITIAL_BACKOFF_SECS",
-                    10,
-                )?,
-                max_backoff_secs: parse_u64("VIDEOGEN_COMPLETION_OUTBOX_MAX_BACKOFF_SECS", 120)?,
-                max_attempts: parse_u64("VIDEOGEN_COMPLETION_OUTBOX_MAX_ATTEMPTS", 10)? as u32,
-                timeout_secs: parse_u64("VIDEOGEN_COMPLETION_TIMEOUT_SECS", 30)?,
-                retention_hours: parse_u64("VIDEOGEN_VAST_OUTBOX_RETENTION_HOURS", 72)?,
-            },
-            generation_timeout_secs,
-            staged_input_ttl_hours,
         })
     }
 }
@@ -282,7 +236,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_rabbitmq_and_outbox_defaults() {
+    fn parses_rabbitmq_and_upload_defaults() {
         let e = env(&[
             ("VIDEOGEN_RABBITMQ_ENABLED", "true"),
             (
@@ -300,8 +254,6 @@ mod tests {
         assert!(cfg.rabbitmq.enabled);
         assert_eq!(cfg.rabbitmq.prefetch, 1);
         assert_eq!(cfg.upload.refresh_margin_secs, 300);
-        assert_eq!(cfg.outbox.max_attempts, 10);
-        assert_eq!(cfg.generation_timeout_secs, 1800);
-        assert_eq!(cfg.staged_input_ttl_hours, 24);
+        assert_eq!(cfg.upload.upload_timeout_secs, 300);
     }
 }

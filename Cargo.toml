@@ -47,9 +47,6 @@ url = "2"
 # RabbitMQ
 lapin = { version = "2", default-features = false, features = ["rustls"] }
 
-# SQLite state persistence
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "macros", "chrono", "json"] }
-
 # Date/time
 chrono = { version = "0.4", features = ["serde"] }
 

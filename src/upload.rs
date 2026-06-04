@@ -194,6 +194,70 @@ pub async fn cleanup_staged_inputs(paths: &[PathBuf], allowed_dir: &Path) -> Res
     Ok(())
 }
 
+// ─── Runtime VideoUploader implementation ─────────────────────────────────
+
+pub struct RuntimeVideoUploader {
+    pub config: crate::config::UploadConfig,
+    pub client: std::sync::Arc<dyn crate::completion::PrakashCompletionClient>,
+}
+
+impl RuntimeVideoUploader {
+    pub fn new(
+        config: crate::config::UploadConfig,
+        client: std::sync::Arc<dyn crate::completion::PrakashCompletionClient>,
+    ) -> Self {
+        Self { config, client }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::worker::VideoUploader for RuntimeVideoUploader {
+    async fn upload(
+        &self,
+        job: &crate::rabbitmq::types::PrakashVideoJob,
+        local_path: &std::path::Path,
+    ) -> anyhow::Result<UploadedVideo> {
+        let http = reqwest::Client::new();
+        let mut destination = job.upload_destination.clone();
+
+        // Refresh the upload URL if it is near expiry
+        if should_refresh_upload_url(destination.expires_at, self.config.refresh_margin_secs) {
+            if let Some(refresh_url) = &job.upload_url_refresh_url {
+                let req = crate::completion::UploadRefreshRequest {
+                    request_key: crate::completion::CompletionRequestKey {
+                        principal: job.request_key.principal.clone(),
+                        counter: job.request_key.counter,
+                    },
+                    request_id: job.request_id.clone(),
+                };
+                match self.client.refresh_upload_url(refresh_url, &req).await {
+                    Ok(refreshed) => {
+                        destination.upload_url = refreshed.upload_url;
+                        destination.expires_at = refreshed.expires_at;
+                    }
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("upload URL refresh failed: {e}"));
+                    }
+                }
+            } else {
+                return Err(anyhow::anyhow!(
+                    "upload URL expired and no refresh URL available"
+                ));
+            }
+        }
+
+        upload_video(
+            &http,
+            local_path,
+            &destination,
+            &self.config.multipart_field_name,
+            self.config.upload_timeout_secs,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))
+    }
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

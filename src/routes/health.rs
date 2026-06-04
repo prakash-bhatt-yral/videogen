@@ -73,7 +73,6 @@ mod tests {
                 18188,
             )),
             http_client: reqwest::Client::new(),
-            job_store: None,
             rabbitmq_status: Arc::new(tokio::sync::RwLock::new(RabbitMqStatus {
                 enabled: false,
                 status: "disabled".to_string(),

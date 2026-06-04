@@ -8,9 +8,7 @@ mod backend;
 mod cleanup;
 mod completion;
 mod config;
-mod jobs;
 mod rabbitmq;
-mod recovery;
 mod routes;
 mod upload;
 mod webhook;
@@ -34,7 +32,6 @@ pub struct AppState {
     pub config: AppConfig,
     pub backend: Arc<dyn backend::VideoGenBackend>,
     pub http_client: reqwest::Client,
-    pub job_store: Option<Arc<crate::jobs::JobStore>>,
     pub rabbitmq_status: Arc<tokio::sync::RwLock<RabbitMqStatus>>,
 }
 
@@ -97,14 +94,6 @@ async fn main() -> Result<()> {
         other => anyhow::bail!("Unknown backend type: {other}"),
     };
 
-    // Open job store (only when RabbitMQ is enabled)
-    let job_store: Option<Arc<crate::jobs::JobStore>> = if config.rabbitmq.enabled {
-        let store = Arc::new(crate::jobs::JobStore::open(&config.worker_state.db_path).await?);
-        Some(store)
-    } else {
-        None
-    };
-
     // Shared RabbitMQ status for the health endpoint
     let rabbitmq_status = Arc::new(tokio::sync::RwLock::new(RabbitMqStatus {
         enabled: config.rabbitmq.enabled,
@@ -120,11 +109,10 @@ async fn main() -> Result<()> {
         config: config.clone(),
         backend: Arc::clone(&backend),
         http_client: reqwest::Client::new(),
-        job_store: job_store.clone(),
         rabbitmq_status: Arc::clone(&rabbitmq_status),
     };
 
-    // Wire RabbitMQ consumer + outbox runner when enabled
+    // Wire RabbitMQ consumer when enabled
     if config.rabbitmq.enabled {
         let auth = config.completion_auth.as_ref().ok_or_else(|| {
             anyhow::anyhow!("VIDEOGEN_CALLBACK_SIGNING_KEY_ID required when rabbitmq enabled")
@@ -133,18 +121,6 @@ async fn main() -> Result<()> {
             crate::completion::CompletionHmacKey::from_base64(&auth.key_id, &auth.secret_b64)?;
         let prakash_client: Arc<dyn crate::completion::PrakashCompletionClient> =
             Arc::new(crate::completion::HmacPrakashClient::new(hmac_key));
-
-        let store = job_store
-            .as_ref()
-            .expect("job_store is Some when rabbitmq enabled")
-            .clone();
-
-        // Spawn outbox runner
-        let outbox_store = Arc::clone(&store);
-        let outbox_client = Arc::clone(&prakash_client);
-        tokio::spawn(async move {
-            crate::recovery::run_outbox_loop(outbox_store, outbox_client).await;
-        });
 
         // Build runtime worker backend
         let worker_backend: Arc<dyn crate::worker::WorkerBackend> =
@@ -156,9 +132,17 @@ async fn main() -> Result<()> {
                 )),
             };
 
+        // Build runtime uploader
+        let worker_uploader: Arc<dyn crate::worker::VideoUploader> =
+            Arc::new(crate::upload::RuntimeVideoUploader::new(
+                config.upload.clone(),
+                Arc::clone(&prakash_client),
+            ));
+
         let real_worker = Arc::new(crate::worker::RuntimeDeliveryWorker {
-            store: Arc::clone(&store),
             backend: worker_backend,
+            uploader: worker_uploader,
+            client: Arc::clone(&prakash_client),
         });
 
         // Spawn consumer

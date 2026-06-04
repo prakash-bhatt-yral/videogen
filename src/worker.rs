@@ -1,6 +1,5 @@
 use crate::backend::{AcceptedGeneration, CompletedGeneration};
 use crate::completion::PrakashCompletionClient;
-use crate::jobs::JobStore;
 use crate::rabbitmq::types::PrakashVideoJob;
 use crate::upload::UploadedVideo;
 
@@ -35,143 +34,48 @@ pub trait VideoUploader: Send + Sync {
     ) -> anyhow::Result<UploadedVideo>;
 }
 
-// ─── Public orchestration functions ──────────────────────────────────────────
+// ─── Public orchestration function ───────────────────────────────────────────
 
-/// Submit job to ComfyUI and return after acceptance (NOT after generation completes).
-/// Consumer acks RabbitMQ after this returns `Ok`.
-pub async fn accept_prakash_job(
-    store: &JobStore,
-    backend: &dyn WorkerBackend,
-    job: PrakashVideoJob,
-) -> anyhow::Result<AcceptedGeneration> {
-    store.claim_received(&job).await?;
-    let accepted = backend
-        .submit_workflow(&job.request_id, job.workflow_json.clone())
-        .await?;
-    store
-        .mark_accepted(&job.request_id, &accepted.prompt_id, &accepted.client_id)
-        .await?;
-    Ok(accepted)
-}
-
-/// Full pipeline: generate → upload → outbox insert.
-/// Called after the RabbitMQ ack. Never panics — all errors are routed to the
-/// failure-completion outbox so the caller can deliver them to Prakash.
+/// Full pipeline: submit → monitor → select output → upload → send completion.
+///
+/// Returns `Ok(())` on full success. Returns `Err(...)` on any failure so the
+/// caller (RabbitMQ consumer) can nack and redeliver.
 pub async fn run_prakash_job(
-    store: &JobStore,
     backend: &dyn WorkerBackend,
     uploader: &dyn VideoUploader,
     client: &dyn PrakashCompletionClient,
     job: PrakashVideoJob,
 ) -> anyhow::Result<()> {
-    // Claim if not already done (idempotent — ignores AlreadyExists).
-    let _ = store.claim_received(&job).await;
-
-    // ── Submit ────────────────────────────────────────────────────────────────
-    let accepted = match backend
+    // 1. Submit to ComfyUI
+    let accepted = backend
         .submit_workflow(&job.request_id, job.workflow_json.clone())
-        .await
-    {
-        Ok(a) => {
-            store
-                .mark_accepted(&job.request_id, &a.prompt_id, &a.client_id)
-                .await?;
-            a
-        }
-        Err(e) => {
-            store.mark_failed(&job.request_id, &e.to_string()).await?;
-            enqueue_failure_completion(store, &job, &e.to_string(), client).await?;
-            return Ok(());
-        }
-    };
-
-    // ── Monitor ───────────────────────────────────────────────────────────────
-    let generated = match backend.monitor_generation(&accepted, 1800).await {
-        Ok(g) => {
-            let outputs_json =
-                serde_json::to_string(&g.outputs).unwrap_or_else(|_| "[]".to_string());
-            store.mark_generated(&job.request_id, &outputs_json).await?;
-            g
-        }
-        Err(e) => {
-            store.mark_failed(&job.request_id, &e.to_string()).await?;
-            enqueue_failure_completion(store, &job, &e.to_string(), client).await?;
-            return Ok(());
-        }
-    };
-
-    // ── Select primary output ─────────────────────────────────────────────────
-    let output = match crate::upload::select_primary_video_output(&generated.outputs) {
-        Ok(o) => o.clone(),
-        Err(e) => {
-            store.mark_failed(&job.request_id, &e.to_string()).await?;
-            enqueue_failure_completion(store, &job, &e.to_string(), client).await?;
-            return Ok(());
-        }
-    };
-
-    // ── Resolve local path ────────────────────────────────────────────────────
-    let local_path = match &output.local_path {
-        Some(p) => std::path::PathBuf::from(p),
-        None => {
-            let reason = "output has no local_path";
-            store.mark_failed(&job.request_id, reason).await?;
-            enqueue_failure_completion(store, &job, reason, client).await?;
-            return Ok(());
-        }
-    };
-
-    // ── Upload ────────────────────────────────────────────────────────────────
-    store.mark_uploading(&job.request_id).await?;
-    let uploaded = match uploader.upload(&job, &local_path).await {
-        Ok(u) => {
-            let uploaded_json = serde_json::to_string(&u).unwrap_or_else(|_| "{}".to_string());
-            store
-                .mark_uploaded(
-                    &job.request_id,
-                    &uploaded_json,
-                    u.bucket_url.as_deref().unwrap_or(""),
-                )
-                .await?;
-            u
-        }
-        Err(e) => {
-            store.mark_failed(&job.request_id, &e.to_string()).await?;
-            enqueue_failure_completion(store, &job, &e.to_string(), client).await?;
-            return Ok(());
-        }
-    };
-
-    // ── Build success outbox entry ────────────────────────────────────────────
-    let bucket_url = match uploaded.require_bucket_url() {
-        Ok(url) => url.to_string(),
-        Err(e) => {
-            store.mark_failed(&job.request_id, &e.to_string()).await?;
-            enqueue_failure_completion(store, &job, &e.to_string(), client).await?;
-            return Ok(());
-        }
-    };
-
-    let completion_body = build_success_completion(&job, &uploaded, &bucket_url);
-    let body_json = serde_json::to_string(&completion_body)?;
-    let outbox_id = uuid::Uuid::new_v4().to_string();
-    store
-        .insert_completion_outbox(crate::jobs::OutboxEntry {
-            id: outbox_id,
-            request_id: job.request_id.clone(),
-            callback_url: job.callback_url.clone(),
-            body_json,
-        })
         .await?;
 
-    store.mark_completion_pending(&job.request_id).await?;
+    // 2. Monitor generation (backend handles its own timeout)
+    let generated = backend.monitor_generation(&accepted, 1800).await?;
+
+    // 3. Select primary video output
+    let output = crate::upload::select_primary_video_output(&generated.outputs)?;
+    let local_path = output
+        .local_path
+        .as_ref()
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| anyhow::anyhow!("output has no local_path"))?;
+
+    // 4. Upload
+    let uploaded = uploader.upload(&job, &local_path).await?;
+
+    // 5. Send success completion
+    let bucket_url = uploaded.require_bucket_url()?;
+    let body = build_success_completion(&job, &uploaded, bucket_url);
+    client.send_completion(&job.callback_url, &body).await?;
 
     Ok(())
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-fn build_success_completion(
+pub fn build_success_completion(
     job: &PrakashVideoJob,
     uploaded: &UploadedVideo,
     bucket_url: &str,
@@ -196,14 +100,12 @@ fn build_success_completion(
     }
 }
 
-async fn enqueue_failure_completion(
-    store: &JobStore,
+pub fn build_failure_completion(
     job: &PrakashVideoJob,
     reason: &str,
-    _client: &dyn crate::completion::PrakashCompletionClient,
-) -> anyhow::Result<()> {
+) -> crate::completion::CompleteVideoRequest {
     use crate::completion::{CompleteVideoRequest, CompletionRequestKey, CompletionStatus};
-    let body = CompleteVideoRequest {
+    CompleteVideoRequest {
         request_key: CompletionRequestKey {
             principal: job.request_key.principal.clone(),
             counter: job.request_key.counter,
@@ -219,42 +121,33 @@ async fn enqueue_failure_completion(
         content_type: None,
         checksum: None,
         failure_reason: Some(reason.to_string()),
-    };
-    let body_json = serde_json::to_string(&body)?;
-    let outbox_id = uuid::Uuid::new_v4().to_string();
-    store
-        .insert_completion_outbox(crate::jobs::OutboxEntry {
-            id: outbox_id,
-            request_id: job.request_id.clone(),
-            callback_url: job.callback_url.clone(),
-            body_json,
-        })
-        .await?;
-    Ok(())
+    }
 }
 
 // ─── Runtime delivery worker ─────────────────────────────────────────────────
 
-/// Bridges the RabbitMQ `DeliveryWorker` trait to `accept_prakash_job`.
-/// Used in production to wire the consumer into the job store + ComfyUI backend.
+/// Bridges the RabbitMQ `DeliveryWorker` trait to `run_prakash_job`.
+/// Holds the RabbitMQ message unacked for the full pipeline, then acks on
+/// success or nacks on failure (RabbitMQ redelivers).
 pub struct RuntimeDeliveryWorker {
-    pub store: std::sync::Arc<JobStore>,
     pub backend: std::sync::Arc<dyn WorkerBackend>,
+    pub uploader: std::sync::Arc<dyn VideoUploader>,
+    pub client: std::sync::Arc<dyn PrakashCompletionClient>,
 }
 
 #[async_trait::async_trait]
 impl crate::rabbitmq::consumer::DeliveryWorker for RuntimeDeliveryWorker {
     async fn accept(&self, job: PrakashVideoJob) -> crate::rabbitmq::consumer::WorkerDecision {
-        match accept_prakash_job(&self.store, self.backend.as_ref(), job).await {
-            Ok(_) => crate::rabbitmq::consumer::WorkerDecision::Accepted,
-            Err(e) => {
-                let msg = e.to_string();
-                if msg.contains("duplicate") || msg.contains("AlreadyExists") {
-                    crate::rabbitmq::consumer::WorkerDecision::Duplicate
-                } else {
-                    crate::rabbitmq::consumer::WorkerDecision::TransientError(msg)
-                }
-            }
+        match run_prakash_job(
+            self.backend.as_ref(),
+            self.uploader.as_ref(),
+            self.client.as_ref(),
+            job,
+        )
+        .await
+        {
+            Ok(()) => crate::rabbitmq::consumer::WorkerDecision::Accepted,
+            Err(e) => crate::rabbitmq::consumer::WorkerDecision::TransientError(e.to_string()),
         }
     }
 }
@@ -264,7 +157,6 @@ impl crate::rabbitmq::consumer::DeliveryWorker for RuntimeDeliveryWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::jobs::JobStore;
     use crate::webhook::OutputFile;
 
     fn sample_job() -> PrakashVideoJob {
@@ -314,33 +206,21 @@ mod tests {
     // ── Fake backend ────────────────────────────────────────────────────────
 
     struct FakeBackend {
-        prompt_id: Option<String>,
+        submit_result: bool, // true = ok, false = error
         outputs: Vec<OutputFile>,
     }
 
     impl FakeBackend {
-        fn accepts_with_prompt(prompt_id: &str) -> Self {
-            Self {
-                prompt_id: Some(prompt_id.to_string()),
-                outputs: vec![],
-            }
-        }
-
         fn completes_with(outputs: Vec<OutputFile>) -> Self {
             Self {
-                prompt_id: Some("prompt-1".to_string()),
+                submit_result: true,
                 outputs,
             }
         }
 
-        fn fails(msg: &str) -> Self {
-            // Store failure as a sentinel: prompt_id = None means submit fails.
-            // We need a different mechanism for monitor failure vs submit failure.
-            // For the test `generation_failure_enqueues_failure_completion`,
-            // the failure happens at submit_workflow level.
-            let _ = msg;
+        fn fails_submit() -> Self {
             Self {
-                prompt_id: None,
+                submit_result: false,
                 outputs: vec![],
             }
         }
@@ -353,13 +233,14 @@ mod tests {
             request_id: &str,
             _workflow: serde_json::Value,
         ) -> anyhow::Result<AcceptedGeneration> {
-            match &self.prompt_id {
-                Some(pid) => Ok(AcceptedGeneration {
+            if self.submit_result {
+                Ok(AcceptedGeneration {
                     request_id: request_id.to_string(),
-                    prompt_id: pid.clone(),
+                    prompt_id: "prompt-1".to_string(),
                     client_id: "fake-client".to_string(),
-                }),
-                None => Err(anyhow::anyhow!("ComfyUI execution error")),
+                })
+            } else {
+                Err(anyhow::anyhow!("ComfyUI execution error"))
             }
         }
 
@@ -394,15 +275,32 @@ mod tests {
 
     // ── Fake completion client ──────────────────────────────────────────────
 
-    struct FakeCompletionClient;
+    use std::sync::{Arc, Mutex};
+
+    struct FakeCompletionClient {
+        received: Arc<Mutex<Vec<crate::completion::CompleteVideoRequest>>>,
+    }
+
+    impl FakeCompletionClient {
+        fn new() -> Self {
+            Self {
+                received: Arc::new(Mutex::new(vec![])),
+            }
+        }
+
+        fn received_bodies(&self) -> Vec<crate::completion::CompleteVideoRequest> {
+            self.received.lock().unwrap().clone()
+        }
+    }
 
     #[async_trait::async_trait]
     impl crate::completion::PrakashCompletionClient for FakeCompletionClient {
         async fn send_completion(
             &self,
             _url: &str,
-            _body: &crate::completion::CompleteVideoRequest,
+            body: &crate::completion::CompleteVideoRequest,
         ) -> anyhow::Result<crate::completion::CompletionDeliveryResult> {
+            self.received.lock().unwrap().push(body.clone());
             Ok(crate::completion::CompletionDeliveryResult::Accepted(200))
         }
 
@@ -418,66 +316,40 @@ mod tests {
     // ── Tests ───────────────────────────────────────────────────────────────
 
     #[tokio::test]
-    async fn accept_job_returns_after_comfyui_acceptance_not_generation_completion() {
-        let store = JobStore::in_memory().await.unwrap();
-        let backend = FakeBackend::accepts_with_prompt("prompt-1");
-
-        let accepted = accept_prakash_job(&store, &backend, sample_job())
-            .await
-            .unwrap();
-
-        assert_eq!(accepted.prompt_id, "prompt-1");
-        let row = store
-            .get_job(&sample_job().request_id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(row.state, crate::jobs::JobState::Accepted);
-    }
-
-    #[tokio::test]
-    async fn successful_job_generates_uploads_and_enqueues_completion() {
-        let store = JobStore::in_memory().await.unwrap();
-        // Claim the job first (normally done by accept_prakash_job)
-        store.claim_received(&sample_job()).await.unwrap();
-
+    async fn successful_job_runs_full_pipeline() {
         let backend = FakeBackend::completes_with(vec![video_output()]);
         let uploader = SimpleUploader(Some(uploaded_video()));
-        let completion = FakeCompletionClient;
+        let client = FakeCompletionClient::new();
 
-        run_prakash_job(&store, &backend, &uploader, &completion, sample_job())
+        run_prakash_job(&backend, &uploader, &client, sample_job())
             .await
             .unwrap();
 
-        let row = store
-            .get_job(&sample_job().request_id)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(row.state, crate::jobs::JobState::CompletionPending);
-        assert!(store.due_completion_outbox(10).await.unwrap().len() >= 1);
+        let completions = client.received_bodies();
+        assert_eq!(completions.len(), 1);
+        let c = &completions[0];
+        assert!(
+            matches!(c.status, crate::completion::CompletionStatus::Success),
+            "expected success completion"
+        );
+        assert_eq!(
+            c.bucket_url.as_deref(),
+            Some("https://bucket.example/videos/video-1.mp4")
+        );
+        assert_eq!(c.video_id.as_deref(), Some("video-1"));
     }
 
     #[tokio::test]
-    async fn generation_failure_enqueues_failure_completion() {
-        let store = JobStore::in_memory().await.unwrap();
-        store.claim_received(&sample_job()).await.unwrap();
-
-        let backend = FakeBackend::fails("ComfyUI execution error");
+    async fn generation_failure_returns_error() {
+        let backend = FakeBackend::fails_submit();
         let uploader = SimpleUploader(None);
-        let completion = FakeCompletionClient;
+        let client = FakeCompletionClient::new();
 
-        run_prakash_job(&store, &backend, &uploader, &completion, sample_job())
-            .await
-            .unwrap();
+        let result = run_prakash_job(&backend, &uploader, &client, sample_job()).await;
+        assert!(result.is_err(), "expected Err on generation failure");
+        assert!(result.unwrap_err().to_string().contains("ComfyUI"));
 
-        let outbox = store.due_completion_outbox(10).await.unwrap();
-        assert!(!outbox.is_empty());
-        // The outbox body must carry a failure status
-        assert!(
-            outbox[0].body_json.contains("\"failure\""),
-            "expected 'failure' in body_json, got: {}",
-            outbox[0].body_json
-        );
+        // No completion should have been sent
+        assert_eq!(client.received_bodies().len(), 0);
     }
 }
