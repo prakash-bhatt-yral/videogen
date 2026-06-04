@@ -69,6 +69,12 @@ pub struct OutboxRow {
     pub attempts: i64,
 }
 
+/// A minimal row returned by `get_job`.
+pub struct JobRow {
+    pub request_id: String,
+    pub state: JobState,
+}
+
 pub struct JobStore {
     pool: sqlx::SqlitePool,
 }
@@ -414,6 +420,37 @@ impl JobStore {
              WHERE request_id = ?",
         )
         .bind(staged_input_json)
+        .bind(&now)
+        .bind(request_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Fetch a single job row by request_id. Returns `None` if not found.
+    pub async fn get_job(&self, request_id: &str) -> anyhow::Result<Option<JobRow>> {
+        let row = sqlx::query_as::<_, (String, String)>(
+            "SELECT request_id, state FROM videogen_jobs WHERE request_id = ?",
+        )
+        .bind(request_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            None => Ok(None),
+            Some((rid, state_str)) => Ok(Some(JobRow {
+                request_id: rid,
+                state: JobState::from_str(&state_str)?,
+            })),
+        }
+    }
+
+    /// Transition a job to `completion_pending` state (after outbox entry is inserted).
+    pub async fn mark_completion_pending(&self, request_id: &str) -> anyhow::Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "UPDATE videogen_jobs SET state = 'completion_pending', updated_at = ? WHERE request_id = ?",
+        )
         .bind(&now)
         .bind(request_id)
         .execute(&self.pool)

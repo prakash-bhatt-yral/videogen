@@ -13,6 +13,7 @@ mod rabbitmq;
 mod routes;
 mod upload;
 mod webhook;
+mod worker;
 
 use config::AppConfig;
 
