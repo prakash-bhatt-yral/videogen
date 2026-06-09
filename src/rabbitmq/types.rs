@@ -15,6 +15,8 @@ pub struct PrakashVideoJob {
     #[serde(default)]
     pub upload_url_refresh_url: Option<String>,
     pub upload_destination: UploadDestination,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staged_image_key: Option<String>,
 }
 
 impl std::fmt::Debug for PrakashVideoJob {
@@ -49,6 +51,9 @@ pub struct UploadDestination {
     #[serde(default)]
     // sensitive: public bucket URL — redacted in Debug
     pub bucket_url: Option<String>,
+    #[serde(default)]
+    // sensitive: AES-256-GCM encrypted delegated identity — redacted in Debug
+    pub encrypted_identity: Option<String>,
 }
 
 impl std::fmt::Debug for UploadDestination {
@@ -61,6 +66,10 @@ impl std::fmt::Debug for UploadDestination {
             .field(
                 "bucket_url",
                 &self.bucket_url.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "encrypted_identity",
+                &self.encrypted_identity.as_ref().map(|_| "<redacted>"),
             )
             .finish()
     }

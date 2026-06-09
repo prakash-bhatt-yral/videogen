@@ -97,6 +97,8 @@ pub fn build_success_completion(
         content_type: Some(uploaded.content_type.clone()),
         checksum: Some(uploaded.checksum.clone()),
         failure_reason: None,
+        encrypted_identity: job.upload_destination.encrypted_identity.clone(),
+        staged_image_key: job.staged_image_key.clone(),
     }
 }
 
@@ -121,6 +123,8 @@ pub fn build_failure_completion(
         content_type: None,
         checksum: None,
         failure_reason: Some(reason.to_string()),
+        encrypted_identity: None,
+        staged_image_key: job.staged_image_key.clone(),
     }
 }
 

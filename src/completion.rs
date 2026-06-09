@@ -126,6 +126,10 @@ pub struct CompleteVideoRequest {
     pub checksum: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted_identity: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staged_image_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
