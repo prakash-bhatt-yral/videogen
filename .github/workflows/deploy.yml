@@ -92,6 +92,21 @@ jobs:
           echo "${{ secrets.VASTAI_SSH_KEY }}" > ~/.ssh/vastai
           chmod 600 ~/.ssh/vastai
           echo -e "Host vastai\n  HostName ${{ steps.resolve.outputs.host }}\n  Port ${{ steps.resolve.outputs.port }}\n  User root\n  IdentityFile ~/.ssh/vastai\n  StrictHostKeyChecking no" > ~/.ssh/config
+          ssh-keyscan -H 94.130.13.115 88.99.151.102 138.201.129.173 >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Open RabbitMQ firewall for Vast.ai host
+        run: |
+          VASTAI_IP="${{ steps.resolve.outputs.host }}"
+          for NODE in 94.130.13.115 88.99.151.102 138.201.129.173; do
+            ssh -i ~/.ssh/vastai deploy@${NODE} "
+              sudo iptables -N RABBITMQ-FILTER 2>/dev/null || true
+              sudo iptables -C INPUT -p tcp --dport 5671 -j RABBITMQ-FILTER 2>/dev/null \
+                || sudo iptables -I INPUT 1 -p tcp --dport 5671 -j RABBITMQ-FILTER
+              sudo iptables -C RABBITMQ-FILTER -p tcp --dport 5671 -s ${VASTAI_IP} -j ACCEPT 2>/dev/null \
+                || sudo iptables -I RABBITMQ-FILTER 1 -p tcp --dport 5671 -s ${VASTAI_IP} -j ACCEPT
+              echo 'rule ok on ${NODE}'
+            "
+          done
 
       - name: Stop existing worker (Free binary lock)
         run: ssh vastai "tmux kill-session -t worker 2>/dev/null || true"
