@@ -94,6 +94,9 @@ done
 
 pip install --no-cache-dir sageattention -q 2>/dev/null || warn "SageAttention failed"
 
+# Pin kornia — 0.8+ removes pyramid.pad which ComfyUI-LTXVideo requires
+pip install --quiet 'kornia>=0.7,<0.8'
+
 # =============================================================================
 # PyTorch — pin to version compatible with installed CUDA driver
 # =============================================================================

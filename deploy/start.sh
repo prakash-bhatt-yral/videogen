@@ -2,8 +2,7 @@
 # =============================================================================
 # Start videogen-worker + Cloudflare tunnel on Vast.ai
 # =============================================================================
-# ComfyUI is already started by the Vast.ai template entrypoint on port 18188.
-# This script starts:
+# Starts ComfyUI if not already running (port 18188), then starts:
 #   - videogen-worker on port 18288 (mapped to external 8288)
 #   - cloudflared tunnel (named if CF_TUNNEL_TOKEN set, else quick tunnel)
 #
@@ -81,9 +80,23 @@ export VIDEOGEN_VAST_STAGED_IMAGE_TTL_HOURS="${VIDEOGEN_VAST_STAGED_IMAGE_TTL_HO
 mkdir -p "$(dirname "${VIDEOGEN_STATE_DB_PATH}")"
 
 # =============================================================================
-# Wait for ComfyUI to be ready (started by Vast.ai template)
+# Start ComfyUI if not already running
 # =============================================================================
 COMFYUI_BASE="${COMFYUI_API_BASE:-http://localhost:18188}"
+if ! curl -sf "${COMFYUI_BASE}/system_stats" > /dev/null 2>&1; then
+    if ! pgrep -f "python.*main.py.*18188" > /dev/null 2>&1; then
+        log "ComfyUI not running — starting..."
+        tmux kill-session -t comfyui 2>/dev/null || true
+        tmux new-session -d -s comfyui \
+            "cd /workspace/ComfyUI && python3 main.py --listen 127.0.0.1 --port 18188 2>&1 | tee ${LOG_DIR}/comfyui.log"
+    else
+        log "ComfyUI process found, waiting for it to become ready..."
+    fi
+fi
+
+# =============================================================================
+# Wait for ComfyUI to be ready
+# =============================================================================
 log "Waiting for ComfyUI at ${COMFYUI_BASE}..."
 for i in $(seq 1 90); do
     if curl -sf "${COMFYUI_BASE}/system_stats" > /dev/null 2>&1; then
@@ -163,7 +176,7 @@ echo -e "${CYAN}═════════════════════�
 echo -e "${CYAN}  videogen-worker started${NC}"
 echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
 echo ""
-echo -e "  ComfyUI:     ${COMFYUI_BASE} (managed by Vast.ai template)"
+echo -e "  ComfyUI:     ${COMFYUI_BASE} (tmux: comfyui)"
 echo -e "  Worker:      http://localhost:${WORKER_PORT}"
 echo -e "  Swagger UI:  http://localhost:${WORKER_PORT}/swagger-ui"
 echo -e "  External:    http://localhost:8288 (via Vast.ai port mapping)"
