@@ -37,6 +37,8 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // Load config
     let config = AppConfig::from_env()?;
 

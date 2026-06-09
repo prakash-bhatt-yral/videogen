@@ -45,7 +45,14 @@ uuid = { version = "1", features = ["v4"] }
 url = "2"
 
 # RabbitMQ
-lapin = { version = "2", default-features = false, features = ["rustls"] }
+lapin = { version = "4", default-features = false, features = ["rustls--ring", "tokio"] }
+# Activate tcp-stream's async TLS path (rustls-futures) which lapin's rustls--ring feature omits.
+# Without this, lapin's AMQPS connect falls through to a plain TCP stream and the broker
+# responds to the bare AMQP header with a TLS alert (7 bytes) that parses as Nom(MapOpt).
+tcp-stream = { version = "0.34", default-features = false, features = ["rustls-futures", "rustls--ring", "tokio"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+futures-rustls = "0.26"
+async-compat = "0.2"
 
 # Date/time
 chrono = { version = "0.4", features = ["serde"] }

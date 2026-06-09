@@ -123,7 +123,45 @@ pub async fn spawn_consumer(
         .ok_or_else(|| anyhow::anyhow!("no AMQPS URLs configured"))?;
 
     // Note: URL is never logged to avoid leaking credentials.
-    let conn = Connection::connect(url, ConnectionProperties::default()).await?;
+    // cert_chain adds the CA cert to the trusted root store. This fails if the broker
+    // presents a CA cert as its own server cert (CaUsedAsEndEntity). Fix: regenerate
+    // broker cert as a proper leaf cert signed by a separate CA.
+    let cert_chain = match &config.tls_ca_cert_pem_b64 {
+        None => {
+            tracing::warn!("VIDEOGEN_RABBITMQ_TLS_CA_CERT_PEM_B64 not set — using system trust store (self-signed broker certs will be rejected)");
+            None
+        }
+        Some(b64) => {
+            use base64::Engine;
+            match base64::engine::general_purpose::STANDARD.decode(b64.trim()) {
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to base64-decode CA cert — check VIDEOGEN_RABBITMQ_TLS_CA_CERT_PEM_B64");
+                    return Err(anyhow::anyhow!("invalid CA cert base64: {e}"));
+                }
+                Ok(bytes) => match String::from_utf8(bytes) {
+                    Err(e) => {
+                        tracing::error!(error = %e, "CA cert is not valid UTF-8 PEM");
+                        return Err(anyhow::anyhow!("CA cert not valid UTF-8: {e}"));
+                    }
+                    Ok(pem) => {
+                        tracing::debug!(pem_len = pem.len(), "loaded CA cert for RabbitMQ TLS");
+                        Some(pem)
+                    }
+                },
+            }
+        }
+    };
+    let runtime = lapin::runtime::default_runtime()?;
+    let conn = Connection::connect_with_config(
+        url,
+        ConnectionProperties::default(),
+        lapin::tcp::OwnedTLSConfig {
+            identity: None,
+            cert_chain,
+        },
+        runtime,
+    )
+    .await?;
     let channel = conn.create_channel().await?;
 
     channel
@@ -132,8 +170,8 @@ pub async fn spawn_consumer(
 
     let mut consumer = channel
         .basic_consume(
-            &config.queue,
-            "videogen-worker",
+            config.queue.as_str().into(),
+            "videogen-worker".into(),
             BasicConsumeOptions::default(),
             FieldTable::default(),
         )
