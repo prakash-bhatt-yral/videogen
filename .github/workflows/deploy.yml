@@ -6,12 +6,12 @@ on:
   workflow_dispatch:
     inputs:
       host:
-        description: "Vast.ai Host IP"
-        required: true
+        description: "Vast.ai Host IP (leave blank to use VASTAI_HOST secret)"
+        required: false
         type: string
       port:
-        description: "Vast.ai SSH Port"
-        required: true
+        description: "Vast.ai SSH Port (leave blank to use VASTAI_PORT secret)"
+        required: false
         type: string
       run_setup:
         description: "Run setup.sh (installs models/nodes)"
@@ -76,15 +76,11 @@ jobs:
       - name: Resolve Vast.ai connection
         id: resolve
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "host=${{ github.event.inputs.host }}" >> $GITHUB_OUTPUT
-            echo "port=${{ github.event.inputs.port }}" >> $GITHUB_OUTPUT
-            echo "run_setup=${{ github.event.inputs.run_setup }}" >> $GITHUB_OUTPUT
-          else
-            echo "host=${{ secrets.VASTAI_HOST }}" >> $GITHUB_OUTPUT
-            echo "port=${{ secrets.VASTAI_PORT }}" >> $GITHUB_OUTPUT
-            echo "run_setup=false" >> $GITHUB_OUTPUT
-          fi
+          INPUT_HOST="${{ github.event.inputs.host }}"
+          INPUT_PORT="${{ github.event.inputs.port }}"
+          echo "host=${INPUT_HOST:-${{ secrets.VASTAI_HOST }}}" >> $GITHUB_OUTPUT
+          echo "port=${INPUT_PORT:-${{ secrets.VASTAI_PORT }}}" >> $GITHUB_OUTPUT
+          echo "run_setup=${{ github.event.inputs.run_setup || 'false' }}" >> $GITHUB_OUTPUT
 
       - name: Set up SSH key
         run: |
@@ -130,10 +126,9 @@ jobs:
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
           BESZEL_KEY: ${{ secrets.BESZEL_KEY }}
           BESZEL_TOKEN: ${{ secrets.BESZEL_TOKEN }}
-          VIDEOGEN_RABBITMQ_CONSUMER_PASSWORD: ${{ secrets.VIDEOGEN_RABBITMQ_CONSUMER_PASSWORD }}
+          VIDEOGEN_RABBITMQ_ENABLED: "true"
+          VIDEOGEN_RABBITMQ_AMQPS_URLS: ${{ secrets.VIDEOGEN_RABBITMQ_AMQPS_URLS }}
           VIDEOGEN_RABBITMQ_TLS_CA_CERT_PEM_B64: ${{ secrets.VIDEOGEN_RABBITMQ_TLS_CA_CERT_PEM_B64 }}
-          VIDEOGEN_CALLBACK_SIGNING_KEY_ID: ${{ secrets.VIDEOGEN_CALLBACK_SIGNING_KEY_ID }}
-          VIDEOGEN_CALLBACK_SIGNING_SECRET_B64: ${{ secrets.VIDEOGEN_CALLBACK_SIGNING_SECRET_B64 }}
         run: |
           ssh vastai << 'DEPLOY_EOF'
             set -e
@@ -153,10 +148,9 @@ jobs:
             fi
             export BESZEL_KEY="${{ secrets.BESZEL_KEY }}"
             export BESZEL_TOKEN="${{ secrets.BESZEL_TOKEN }}"
-            export VIDEOGEN_RABBITMQ_CONSUMER_PASSWORD="${{ secrets.VIDEOGEN_RABBITMQ_CONSUMER_PASSWORD }}"
+            export VIDEOGEN_RABBITMQ_ENABLED="true"
+            export VIDEOGEN_RABBITMQ_AMQPS_URLS="${{ secrets.VIDEOGEN_RABBITMQ_AMQPS_URLS }}"
             export VIDEOGEN_RABBITMQ_TLS_CA_CERT_PEM_B64="${{ secrets.VIDEOGEN_RABBITMQ_TLS_CA_CERT_PEM_B64 }}"
-            export VIDEOGEN_CALLBACK_SIGNING_KEY_ID="${{ secrets.VIDEOGEN_CALLBACK_SIGNING_KEY_ID }}"
-            export VIDEOGEN_CALLBACK_SIGNING_SECRET_B64="${{ secrets.VIDEOGEN_CALLBACK_SIGNING_SECRET_B64 }}"
 
             # Ensure worker starts on port 18288
             export PORT=18288
