@@ -134,9 +134,10 @@ pub async fn upload_video(
     .map_err(|e| UploadError::RequestFailed(e.to_string()))?;
 
     if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
         return Err(UploadError::RequestFailed(format!(
-            "upload status: {}",
-            resp.status()
+            "upload status: {status} body: {body}"
         )));
     }
 

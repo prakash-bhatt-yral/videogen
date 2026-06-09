@@ -55,9 +55,10 @@ impl WorkerBackend for StubBackend {
         let filename = format!("stub-{}.mp4", self.next_id());
         let path = std::path::Path::new(&self.output_dir).join(&filename);
 
-        // Write minimal placeholder bytes (not a valid MP4 but sufficient for upload)
+        // Write a real minimal MP4 so the upload service can extract a thumbnail.
+        static STUB_MP4: &[u8] = include_bytes!("../../fixtures/stub.mp4");
         tokio::fs::create_dir_all(&self.output_dir).await?;
-        tokio::fs::write(&path, b"stub-video-placeholder").await?;
+        tokio::fs::write(&path, STUB_MP4).await?;
 
         tracing::info!(
             request_id = %accepted.request_id,
