@@ -51,7 +51,7 @@ const TIMEOUT: Duration = Duration::from_secs(3 * 60 * 60); // 3 hours
 const OUTPUT_DIR: &str = "benchmark_output";
 
 const PROMPTS: &[&str] = &[
-    r#"A cozy coffee shop on a rainy evening, people reading books, warm lights, cinematic vibe, relaxing atmosphere."#,
+    r#"A cozy forest riverside on a rainy evening, people reading books, warm lights, cinematic vibe, relaxing atmosphere."#,
     // r#"A medium shot opens on a sun-drenched patch of living room floor, where golden hour sunlight streams through a large window, illuminating dancing dust motes above a soft, worn rug. The air is warm and peaceful as Cooper, a fluffy cream-colored Shih Tzu wi"#,
     // r#"Medium shot of Raju "Rocket" Singh amidst the vibrant chaos of a bustling Indian street food stall at dusk. Flickering neon lights paint the wet pavement with electric hues as steam rises from sizzling woks, creating a thick, aromatic atmosphere. Raju, in"#,
     // r#"A medium shot opens on Dilkhush Rana Ji seated on a weathered wooden bench in a sun-dappled courtyard of a traditional Indian home. Golden hour sunlight filters through a neem tree, bathing the scene in a warm, comforting glow, highlighting the fine dust"#,

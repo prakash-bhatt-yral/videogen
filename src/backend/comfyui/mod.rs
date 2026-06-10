@@ -202,11 +202,13 @@ impl ComfyUIBackend {
                     .unwrap_or("image/jpeg")
                     .to_string();
                 let bytes = axum::body::Bytes::from(
-                    resp.bytes()
-                        .await
-                        .context("failed to read image bytes")?,
+                    resp.bytes().await.context("failed to read image bytes")?,
                 );
-                let ext = if content_type.contains("png") { "png" } else { "jpg" };
+                let ext = if content_type.contains("png") {
+                    "png"
+                } else {
+                    "jpg"
+                };
                 let filename = format!("{}.{ext}", uuid::Uuid::new_v4());
                 let upload = self
                     .client
@@ -281,12 +283,20 @@ impl crate::worker::WorkerBackend for ComfyUIBackend {
         let mut resolved = Vec::with_capacity(outputs.len());
         for mut output in outputs {
             if output.output_type.as_deref() == Some("videos") {
-                let tmp_path = format!("/tmp/videogen-{}-{}.mp4", accepted.request_id, uuid::Uuid::new_v4());
-                match self.client.get_file(
-                    &output.filename,
-                    output.subfolder.as_deref(),
-                    Some("output"),
-                ).await {
+                let tmp_path = format!(
+                    "/tmp/videogen-{}-{}.mp4",
+                    accepted.request_id,
+                    uuid::Uuid::new_v4()
+                );
+                match self
+                    .client
+                    .get_file(
+                        &output.filename,
+                        output.subfolder.as_deref(),
+                        Some("output"),
+                    )
+                    .await
+                {
                     Ok((_headers, bytes)) => {
                         if let Err(e) = tokio::fs::write(&tmp_path, &bytes).await {
                             warn!(file = %output.filename, error = %e, "failed to write temp output");

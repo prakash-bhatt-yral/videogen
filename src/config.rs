@@ -104,9 +104,15 @@ impl AppConfig {
                 let password = get("VIDEOGEN_RABBITMQ_CONSUMER_PASSWORD");
                 if !password.is_empty() {
                     vec![
-                        format!("amqps://vast_ltx_consumer:{password}@94.130.13.115:5671/%2Fvideogen"),
-                        format!("amqps://vast_ltx_consumer:{password}@88.99.151.102:5671/%2Fvideogen"),
-                        format!("amqps://vast_ltx_consumer:{password}@138.201.129.173:5671/%2Fvideogen"),
+                        format!(
+                            "amqps://vast_ltx_consumer:{password}@94.130.13.115:5671/%2Fvideogen"
+                        ),
+                        format!(
+                            "amqps://vast_ltx_consumer:{password}@88.99.151.102:5671/%2Fvideogen"
+                        ),
+                        format!(
+                            "amqps://vast_ltx_consumer:{password}@138.201.129.173:5671/%2Fvideogen"
+                        ),
                     ]
                 } else {
                     get("VIDEOGEN_RABBITMQ_AMQPS_URLS")

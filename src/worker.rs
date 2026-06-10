@@ -91,8 +91,18 @@ pub async fn run_prakash_job(
     // 5. Send success completion
     let bucket_url = uploaded.require_bucket_url()?;
     let body = build_success_completion(&job, &uploaded, bucket_url);
-    client.send_completion(&job.callback_url, &body).await?;
-    info!(request_id, callback_url = %job.callback_url, "completion sent");
+    let delivery = client.send_completion(&job.callback_url, &body).await?;
+    match &delivery {
+        crate::completion::CompletionDeliveryResult::Accepted(status) => {
+            info!(request_id, callback_url = %job.callback_url, http_status = status, "completion sent");
+        }
+        crate::completion::CompletionDeliveryResult::Retryable(reason) => {
+            anyhow::bail!("completion callback failed (retryable): {reason}");
+        }
+        crate::completion::CompletionDeliveryResult::NonRetryable(reason) => {
+            anyhow::bail!("completion callback failed (permanent): {reason}");
+        }
+    }
 
     Ok(())
 }
