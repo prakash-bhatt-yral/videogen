@@ -231,15 +231,24 @@ impl PrakashCompletionClient for HmacPrakashClient {
                 let status = r.status().as_u16();
                 match status {
                     200 | 202 | 409 => Ok(CompletionDeliveryResult::Accepted(status)),
-                    401 | 403 => Ok(CompletionDeliveryResult::NonRetryable(format!(
-                        "auth error: {status}"
-                    ))),
-                    500..=599 => Ok(CompletionDeliveryResult::Retryable(format!(
-                        "server error: {status}"
-                    ))),
-                    _ => Ok(CompletionDeliveryResult::NonRetryable(format!(
-                        "unexpected status: {status}"
-                    ))),
+                    401 | 403 => {
+                        let body = r.text().await.unwrap_or_default();
+                        Ok(CompletionDeliveryResult::NonRetryable(format!(
+                            "auth error: {status}: {body}"
+                        )))
+                    }
+                    500..=599 => {
+                        let body = r.text().await.unwrap_or_default();
+                        Ok(CompletionDeliveryResult::Retryable(format!(
+                            "server error: {status}: {body}"
+                        )))
+                    }
+                    _ => {
+                        let body = r.text().await.unwrap_or_default();
+                        Ok(CompletionDeliveryResult::NonRetryable(format!(
+                            "unexpected status: {status}: {body}"
+                        )))
+                    }
                 }
             }
         }
