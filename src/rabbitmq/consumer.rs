@@ -11,6 +11,7 @@ pub enum DeliveryDecision {
     RejectNoRequeue,
 }
 
+#[derive(Debug)]
 pub enum WorkerDecision {
     Accepted,
     TransientError(String),

@@ -185,7 +185,14 @@ impl crate::rabbitmq::consumer::DeliveryWorker for RuntimeDeliveryWorker {
         .await
         {
             Ok(()) => crate::rabbitmq::consumer::WorkerDecision::Accepted,
-            Err(e) => crate::rabbitmq::consumer::WorkerDecision::TransientError(e.to_string()),
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("(permanent)") {
+                    crate::rabbitmq::consumer::WorkerDecision::ValidationFailure(msg)
+                } else {
+                    crate::rabbitmq::consumer::WorkerDecision::TransientError(msg)
+                }
+            }
         }
     }
 }
@@ -351,6 +358,29 @@ mod tests {
         }
     }
 
+    struct NonRetryableCompletionClient;
+
+    #[async_trait::async_trait]
+    impl crate::completion::PrakashCompletionClient for NonRetryableCompletionClient {
+        async fn send_completion(
+            &self,
+            _url: &str,
+            _body: &crate::completion::CompleteVideoRequest,
+        ) -> anyhow::Result<crate::completion::CompletionDeliveryResult> {
+            Ok(crate::completion::CompletionDeliveryResult::NonRetryable(
+                "auth error: 401".to_string(),
+            ))
+        }
+
+        async fn refresh_upload_url(
+            &self,
+            _url: &str,
+            _body: &crate::completion::UploadRefreshRequest,
+        ) -> anyhow::Result<crate::completion::UploadRefreshResponse> {
+            Err(anyhow::anyhow!("not used in tests"))
+        }
+    }
+
     // ── Tests ───────────────────────────────────────────────────────────────
 
     #[tokio::test]
@@ -389,5 +419,24 @@ mod tests {
 
         // No completion should have been sent
         assert_eq!(client.received_bodies().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn non_retryable_completion_maps_to_validation_failure() {
+        use crate::rabbitmq::consumer::DeliveryWorker;
+        let worker = RuntimeDeliveryWorker {
+            backend: std::sync::Arc::new(FakeBackend::completes_with(vec![video_output()])),
+            uploader: std::sync::Arc::new(SimpleUploader(Some(uploaded_video()))),
+            client: std::sync::Arc::new(NonRetryableCompletionClient),
+        };
+
+        let decision = worker.accept(sample_job()).await;
+        assert!(
+            matches!(
+                decision,
+                crate::rabbitmq::consumer::WorkerDecision::ValidationFailure(_)
+            ),
+            "permanent 401 must produce ValidationFailure (ack/drain), got: {decision:?}"
+        );
     }
 }
