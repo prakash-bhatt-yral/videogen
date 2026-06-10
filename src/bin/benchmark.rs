@@ -309,6 +309,7 @@ async fn download_video(
     let bytes = client
         .get(&url)
         .bearer_auth(token)
+        .timeout(Duration::from_secs(600))
         .send()
         .await
         .context("GET /view")?
