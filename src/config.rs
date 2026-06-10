@@ -135,6 +135,7 @@ impl AppConfig {
             Some(CompletionAuthConfig {
                 key_id: env
                     .get("VIDEOGEN_CALLBACK_SIGNING_KEY_ID")
+                    .filter(|s| !s.is_empty())
                     .cloned()
                     .unwrap_or_else(|| "v1".to_string()),
                 secret: get("AUTH_TOKEN").to_string(),
