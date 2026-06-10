@@ -2,6 +2,7 @@ use crate::backend::{AcceptedGeneration, CompletedGeneration};
 use crate::completion::PrakashCompletionClient;
 use crate::rabbitmq::types::PrakashVideoJob;
 use crate::upload::UploadedVideo;
+use tracing::{info, warn};
 
 // ─── Traits ──────────────────────────────────────────────────────────────────
 
@@ -46,16 +47,27 @@ pub async fn run_prakash_job(
     client: &dyn PrakashCompletionClient,
     job: PrakashVideoJob,
 ) -> anyhow::Result<()> {
+    let request_id = &job.request_id;
+    info!(request_id, model_id = %job.model_id, "job received — submitting workflow");
+
     // 1. Submit to ComfyUI
     let accepted = backend
-        .submit_workflow(&job.request_id, job.workflow_json.clone())
+        .submit_workflow(request_id, job.workflow_json.clone())
         .await?;
+    info!(request_id, prompt_id = %accepted.prompt_id, "workflow accepted by ComfyUI");
 
     // 2. Monitor generation (backend handles its own timeout)
     let generated = backend.monitor_generation(&accepted, 1800).await?;
+    info!(
+        request_id,
+        prompt_id = %accepted.prompt_id,
+        outputs = generated.outputs.len(),
+        "generation complete"
+    );
 
     // 3. Select primary video output
     let output = crate::upload::select_primary_video_output(&generated.outputs)?;
+    info!(request_id, filename = %output.filename, "selected primary video output");
     let local_path = output
         .local_path
         .as_ref()
@@ -63,12 +75,24 @@ pub async fn run_prakash_job(
         .ok_or_else(|| anyhow::anyhow!("output has no local_path"))?;
 
     // 4. Upload
-    let uploaded = uploader.upload(&job, &local_path).await?;
+    let uploaded = uploader.upload(&job, &local_path).await;
+    if let Err(e) = tokio::fs::remove_file(&local_path).await {
+        warn!(request_id, path = %local_path.display(), error = %e, "failed to remove temp file");
+    }
+    let uploaded = uploaded?;
+    info!(
+        request_id,
+        video_id = %uploaded.video_id,
+        object_key = %uploaded.object_key,
+        file_size = uploaded.file_size,
+        "video uploaded to Storj"
+    );
 
     // 5. Send success completion
     let bucket_url = uploaded.require_bucket_url()?;
     let body = build_success_completion(&job, &uploaded, bucket_url);
     client.send_completion(&job.callback_url, &body).await?;
+    info!(request_id, callback_url = %job.callback_url, "completion sent");
 
     Ok(())
 }

@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use axum::body::Bytes;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use super::{
     AcceptedGeneration, CompletedGeneration, GenerateRequest, GenerateResponse, HealthResponse,
@@ -168,6 +168,59 @@ impl VideoGenBackend for ComfyUIBackend {
     }
 }
 
+impl ComfyUIBackend {
+    /// Download any URL-valued `image` inputs in LoadImage nodes and re-upload them
+    /// to ComfyUI so the workflow can reference them by local filename.
+    async fn resolve_image_urls(
+        &self,
+        mut workflow: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        if let Some(obj) = workflow.as_object_mut() {
+            for (_node_id, node) in obj.iter_mut() {
+                if node.get("class_type").and_then(|v| v.as_str()) != Some("LoadImage") {
+                    continue;
+                }
+                let url = match node
+                    .get("inputs")
+                    .and_then(|i| i.get("image"))
+                    .and_then(|v| v.as_str())
+                {
+                    Some(s) if s.starts_with("http://") || s.starts_with("https://") => {
+                        s.to_string()
+                    }
+                    _ => continue,
+                };
+
+                info!(url = %url, "downloading LoadImage URL for ComfyUI upload");
+                let resp = reqwest::get(&url)
+                    .await
+                    .with_context(|| format!("failed to download image: {url}"))?;
+                let content_type = resp
+                    .headers()
+                    .get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("image/jpeg")
+                    .to_string();
+                let bytes = axum::body::Bytes::from(
+                    resp.bytes()
+                        .await
+                        .context("failed to read image bytes")?,
+                );
+                let ext = if content_type.contains("png") { "png" } else { "jpg" };
+                let filename = format!("{}.{ext}", uuid::Uuid::new_v4());
+                let upload = self
+                    .client
+                    .upload_image(&filename, bytes, &content_type)
+                    .await
+                    .context("failed to upload image to ComfyUI")?;
+                info!(original_url = %url, uploaded_as = %upload.name, "image uploaded to ComfyUI");
+                node["inputs"]["image"] = serde_json::Value::String(upload.name);
+            }
+        }
+        Ok(workflow)
+    }
+}
+
 #[async_trait::async_trait]
 impl crate::worker::WorkerBackend for ComfyUIBackend {
     async fn submit_workflow(
@@ -175,8 +228,11 @@ impl crate::worker::WorkerBackend for ComfyUIBackend {
         request_id: &str,
         workflow_json: serde_json::Value,
     ) -> anyhow::Result<AcceptedGeneration> {
+        info!(request_id, "resolving LoadImage URLs in workflow");
+        let workflow_json = self.resolve_image_urls(workflow_json).await?;
         let client_id = uuid::Uuid::new_v4().to_string();
         let prompt_id = self.client.queue_prompt(&workflow_json, &client_id).await?;
+        info!(request_id, prompt_id = %prompt_id, "workflow queued in ComfyUI");
 
         // Track the job in the in-memory state map
         let job_state = JobState {
@@ -215,10 +271,40 @@ impl crate::worker::WorkerBackend for ComfyUIBackend {
         )
         .await
         .map_err(|_| anyhow::anyhow!("generation timed out after {timeout_secs}s"))??;
+        info!(
+            request_id = %accepted.request_id,
+            prompt_id = %accepted.prompt_id,
+            "ComfyUI generation finished, downloading outputs"
+        );
+
+        // Download video outputs to local temp files so the uploader has a path to read.
+        let mut resolved = Vec::with_capacity(outputs.len());
+        for mut output in outputs {
+            if output.output_type.as_deref() == Some("videos") {
+                let tmp_path = format!("/tmp/videogen-{}-{}.mp4", accepted.request_id, uuid::Uuid::new_v4());
+                match self.client.get_file(
+                    &output.filename,
+                    output.subfolder.as_deref(),
+                    Some("output"),
+                ).await {
+                    Ok((_headers, bytes)) => {
+                        if let Err(e) = tokio::fs::write(&tmp_path, &bytes).await {
+                            warn!(file = %output.filename, error = %e, "failed to write temp output");
+                        } else {
+                            output.local_path = Some(tmp_path);
+                        }
+                    }
+                    Err(e) => {
+                        warn!(file = %output.filename, error = %e, "failed to download output from ComfyUI");
+                    }
+                }
+            }
+            resolved.push(output);
+        }
 
         Ok(CompletedGeneration {
             prompt_id: accepted.prompt_id.clone(),
-            outputs,
+            outputs: resolved,
         })
     }
 }

@@ -270,9 +270,13 @@ impl ComfyUIClient {
         subfolder: Option<&str>,
         file_type: Option<&str>,
     ) -> Result<(axum::http::HeaderMap, Bytes)> {
-        let mut url = format!("{}/view?filename={}", self.base_url, filename);
+        let mut url = format!(
+            "{}/view?filename={}",
+            self.base_url,
+            urlencoding::encode(filename)
+        );
         if let Some(sf) = subfolder {
-            url.push_str(&format!("&subfolder={sf}"));
+            url.push_str(&format!("&subfolder={}", urlencoding::encode(sf)));
         }
         if let Some(ft) = file_type {
             url.push_str(&format!("&type={ft}"));
