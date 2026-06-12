@@ -29,8 +29,7 @@ services:
       VIDEOGEN_RABBITMQ_ENABLED: "${VIDEOGEN_RABBITMQ_ENABLED:-false}"
       VIDEOGEN_RABBITMQ_AMQPS_URLS: "${VIDEOGEN_RABBITMQ_AMQPS_URLS:-}"
       VIDEOGEN_STATE_DB_PATH: "${VIDEOGEN_STATE_DB_PATH:-/workspace/videogen-worker/state.db}"
-      PRAKASH_COMPLETION_HMAC_KEY_ID: "${PRAKASH_COMPLETION_HMAC_KEY_ID:-}"
-      PRAKASH_COMPLETION_HMAC_SECRET_B64: "${PRAKASH_COMPLETION_HMAC_SECRET_B64:-}"
+      VIDEOGEN_CALLBACK_SIGNING_KEY_ID: "${VIDEOGEN_CALLBACK_SIGNING_KEY_ID:-}"
     volumes:
       - comfyui_output:/workspace/ComfyUI/output
       - videogen_state:/workspace/videogen-worker

@@ -120,8 +120,8 @@ async fn main() -> Result<()> {
             anyhow::anyhow!("VIDEOGEN_CALLBACK_SIGNING_KEY_ID required when rabbitmq enabled")
         })?;
         let hmac_key = crate::completion::CompletionHmacKey::from_str(&auth.key_id, &auth.secret)?;
-        let prakash_client: Arc<dyn crate::completion::PrakashCompletionClient> =
-            Arc::new(crate::completion::HmacPrakashClient::new(hmac_key));
+        let completion_client: Arc<dyn crate::completion::CompletionClient> =
+            Arc::new(crate::completion::HmacCompletionClient::new(hmac_key));
 
         // Build runtime worker backend
         let worker_backend: Arc<dyn crate::worker::WorkerBackend> =
@@ -137,13 +137,13 @@ async fn main() -> Result<()> {
         let worker_uploader: Arc<dyn crate::worker::VideoUploader> =
             Arc::new(crate::upload::RuntimeVideoUploader::new(
                 config.upload.clone(),
-                Arc::clone(&prakash_client),
+                Arc::clone(&completion_client),
             ));
 
         let real_worker = Arc::new(crate::worker::RuntimeDeliveryWorker {
             backend: worker_backend,
             uploader: worker_uploader,
-            client: Arc::clone(&prakash_client),
+            client: Arc::clone(&completion_client),
         });
 
         // Spawn consumer

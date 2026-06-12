@@ -141,12 +141,12 @@ Production video generation uses RabbitMQ as the job source. Enable it by settin
 | `VIDEOGEN_RABBITMQ_CONCURRENCY` | Parallel job workers (default: `1`) |
 | `VIDEOGEN_RABBITMQ_TLS_CA_CERT_PEM_B64` | Base64-encoded CA cert PEM for TLS verification (optional) |
 | `VIDEOGEN_STATE_DB_PATH` | SQLite state DB path (default: `/workspace/videogen-worker/state.db`) |
-| `PRAKASH_COMPLETION_HMAC_KEY_ID` | HMAC key ID used to sign completion callbacks to Prakash |
-| `PRAKASH_COMPLETION_HMAC_SECRET_B64` | Base64-encoded HMAC secret for completion callbacks |
+| `AUTH_TOKEN` | HMAC signing secret and bearer token |
+| `VIDEOGEN_CALLBACK_SIGNING_KEY_ID` | HMAC key ID used to sign completion callbacks |
 
 ### Job protocol
 
-- `bucket_url` is pre-computed by Prakash and included in the job message — the worker does not construct it.
+- `bucket_url` is pre-computed by the upstream service and included in the job message; the worker does not construct it.
 - Upload uses `POST` multipart/form-data with field name `file` (configurable via `VIDEOGEN_BUCKET_UPLOAD_MULTIPART_FIELD`).
 - Local output file is deleted after a successful upload is persisted to the outbox.
 
@@ -180,8 +180,8 @@ Add these secrets to the repository to enable RabbitMQ mode in CI/CD:
 |--------|-------------|
 | `VIDEOGEN_RABBITMQ_AMQPS_URLS` | AMQPS broker URL(s) with credentials |
 | `VIDEOGEN_RABBITMQ_TLS_CA_CERT_PEM_B64` | Base64 CA cert PEM (if using custom CA) |
-| `PRAKASH_COMPLETION_HMAC_KEY_ID` | HMAC key ID for completion callbacks |
-| `PRAKASH_COMPLETION_HMAC_SECRET_B64` | HMAC secret for completion callbacks |
+| `AUTH_TOKEN` | HMAC signing secret and bearer token |
+| `VIDEOGEN_CALLBACK_SIGNING_KEY_ID` | HMAC key ID for completion callbacks |
 
 Note: `VIDEOGEN_RABBITMQ_ENABLED` is intentionally not set in the workflow — operators set it on the target instance.
 

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::rabbitmq::types::PrakashVideoJob;
+use crate::rabbitmq::types::VideoGenerationJob;
 
 // ─── Decision types ──────────────────────────────────────────────────────────
 
@@ -32,7 +32,7 @@ pub struct DeliveryProperties {
 
 #[async_trait::async_trait]
 pub trait DeliveryWorker: Send + Sync {
-    async fn accept(&self, job: PrakashVideoJob) -> WorkerDecision;
+    async fn accept(&self, job: VideoGenerationJob) -> WorkerDecision;
 }
 
 // ─── Handler (pure dispatcher — unit-testable seam) ──────────────────────────
@@ -57,7 +57,7 @@ pub async fn handle_delivery(
     worker: &dyn DeliveryWorker,
 ) -> DeliveryDecision {
     // Step 1: parse JSON
-    let job: PrakashVideoJob = match serde_json::from_slice(body) {
+    let job: VideoGenerationJob = match serde_json::from_slice(body) {
         Ok(j) => j,
         Err(e) => {
             tracing::error!(error = %e, "invalid JSON in RabbitMQ delivery");
@@ -311,7 +311,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl DeliveryWorker for FakeWorker {
-        async fn accept(&self, _job: crate::rabbitmq::types::PrakashVideoJob) -> WorkerDecision {
+        async fn accept(&self, _job: crate::rabbitmq::types::VideoGenerationJob) -> WorkerDecision {
             match self.mode {
                 FakeWorkerMode::Ok => WorkerDecision::Accepted,
                 FakeWorkerMode::TransientError => {

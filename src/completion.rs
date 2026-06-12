@@ -52,13 +52,13 @@ pub fn body_sha256_hex(raw_body: &[u8]) -> String {
     hex::encode(Sha256::digest(raw_body))
 }
 
-/// Signs a Prakash API request using HMAC-SHA256.
+/// Signs an API request using HMAC-SHA256.
 ///
 /// Message format: `"{METHOD}\n{PATH}\n{UNIX_TIMESTAMP}\n{BODY_SHA256_HEX}"`
 ///
 /// # Security
 /// The HMAC secret is never logged or exposed via this function.
-pub fn sign_prakash_request(
+pub fn sign_hmac_request(
     method: &str,
     path: &str,
     unix_timestamp: i64,
@@ -165,7 +165,7 @@ impl CompletionDeliveryResult {
 // ─── Client trait ────────────────────────────────────────────────────────────
 
 #[async_trait::async_trait]
-pub trait PrakashCompletionClient: Send + Sync {
+pub trait CompletionClient: Send + Sync {
     async fn send_completion(
         &self,
         url: &str,
@@ -181,12 +181,12 @@ pub trait PrakashCompletionClient: Send + Sync {
 
 // ─── Runtime HMAC client ─────────────────────────────────────────────────────
 
-pub struct HmacPrakashClient {
+pub struct HmacCompletionClient {
     http: reqwest::Client,
     key: CompletionHmacKey,
 }
 
-impl HmacPrakashClient {
+impl HmacCompletionClient {
     pub fn new(key: CompletionHmacKey) -> Self {
         Self {
             http: reqwest::Client::new(),
@@ -202,7 +202,7 @@ impl HmacPrakashClient {
         let raw = serde_json::to_vec(body)?;
         let path = completion_path_from_url(url)?;
         let timestamp = chrono::Utc::now().timestamp();
-        let signed = sign_prakash_request("POST", &path, timestamp, &raw, &self.key)?;
+        let signed = sign_hmac_request("POST", &path, timestamp, &raw, &self.key)?;
         self.http
             .post(url)
             .header("Content-Type", "application/json")
@@ -218,7 +218,7 @@ impl HmacPrakashClient {
 }
 
 #[async_trait::async_trait]
-impl PrakashCompletionClient for HmacPrakashClient {
+impl CompletionClient for HmacCompletionClient {
     async fn send_completion(
         &self,
         url: &str,
@@ -274,12 +274,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn signs_prakash_hmac_message() {
+    fn signs_hmac_request_message() {
         let key =
             CompletionHmacKey::from_base64("v1", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
                 .unwrap();
         let body = br#"{"status":"success"}"#;
-        let signed = sign_prakash_request(
+        let signed = sign_hmac_request(
             "POST",
             "/api/v2/videogen/complete",
             1_777_000_000,

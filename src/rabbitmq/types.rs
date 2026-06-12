@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct PrakashVideoJob {
+pub struct VideoGenerationJob {
     pub request_id: String,
     pub request_key: RequestKey,
     pub user_principal: String,
@@ -19,9 +19,9 @@ pub struct PrakashVideoJob {
     pub staged_image_key: Option<String>,
 }
 
-impl std::fmt::Debug for PrakashVideoJob {
+impl std::fmt::Debug for VideoGenerationJob {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PrakashVideoJob")
+        f.debug_struct("VideoGenerationJob")
             .field("request_id", &self.request_id)
             .field("request_key", &self.request_key)
             .field("user_principal", &self.user_principal)
@@ -89,11 +89,11 @@ pub enum JobValidationError {
     EmptyObjectKey,
     #[error("upload_destination.upload_url is empty")]
     EmptyUploadUrl,
-    #[error("upload_destination.bucket_url is required (Prakash must include it in the job)")]
+    #[error("upload_destination.bucket_url is required in the job payload")]
     MissingBucketUrl,
 }
 
-impl PrakashVideoJob {
+impl VideoGenerationJob {
     pub fn validate(&self) -> Result<(), JobValidationError> {
         Uuid::parse_str(&self.request_id)
             .map_err(|e| JobValidationError::InvalidRequestId(e.to_string()))?;
@@ -127,7 +127,7 @@ impl PrakashVideoJob {
 mod tests {
     use super::*;
 
-    fn sample_job() -> PrakashVideoJob {
+    fn sample_job() -> VideoGenerationJob {
         serde_json::from_str(
             r#"{
             "request_id": "11111111-1111-4111-8111-111111111111",
@@ -151,7 +151,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_prakash_job_message() {
+    fn parses_video_generation_job_message() {
         let job = sample_job();
         assert_eq!(job.request_id, "11111111-1111-4111-8111-111111111111");
         assert_eq!(job.request_key.counter, 17);
@@ -189,7 +189,7 @@ mod tests {
                 "expires_at": "2026-06-03T12:00:00Z"
             }
         }"#;
-        let job: PrakashVideoJob = serde_json::from_str(raw).unwrap();
+        let job: VideoGenerationJob = serde_json::from_str(raw).unwrap();
         assert!(job
             .validate()
             .unwrap_err()

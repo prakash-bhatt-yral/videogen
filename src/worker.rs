@@ -1,6 +1,6 @@
 use crate::backend::{AcceptedGeneration, CompletedGeneration};
-use crate::completion::PrakashCompletionClient;
-use crate::rabbitmq::types::PrakashVideoJob;
+use crate::completion::CompletionClient;
+use crate::rabbitmq::types::VideoGenerationJob;
 use crate::upload::UploadedVideo;
 use tracing::{info, warn};
 
@@ -30,7 +30,7 @@ pub trait WorkerBackend: Send + Sync {
 pub trait VideoUploader: Send + Sync {
     async fn upload(
         &self,
-        job: &PrakashVideoJob,
+        job: &VideoGenerationJob,
         local_path: &std::path::Path,
     ) -> anyhow::Result<UploadedVideo>;
 }
@@ -41,11 +41,11 @@ pub trait VideoUploader: Send + Sync {
 ///
 /// Returns `Ok(())` on full success. Returns `Err(...)` on any failure so the
 /// caller (RabbitMQ consumer) can nack and redeliver.
-pub async fn run_prakash_job(
+pub async fn run_video_generation_job(
     backend: &dyn WorkerBackend,
     uploader: &dyn VideoUploader,
-    client: &dyn PrakashCompletionClient,
-    job: PrakashVideoJob,
+    client: &dyn CompletionClient,
+    job: VideoGenerationJob,
 ) -> anyhow::Result<()> {
     let request_id = &job.request_id;
     info!(request_id, model_id = %job.model_id, "job received — submitting workflow");
@@ -110,7 +110,7 @@ pub async fn run_prakash_job(
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 pub fn build_success_completion(
-    job: &PrakashVideoJob,
+    job: &VideoGenerationJob,
     uploaded: &UploadedVideo,
     bucket_url: &str,
 ) -> crate::completion::CompleteVideoRequest {
@@ -137,7 +137,7 @@ pub fn build_success_completion(
 }
 
 pub fn build_failure_completion(
-    job: &PrakashVideoJob,
+    job: &VideoGenerationJob,
     reason: &str,
 ) -> crate::completion::CompleteVideoRequest {
     use crate::completion::{CompleteVideoRequest, CompletionRequestKey, CompletionStatus};
@@ -164,19 +164,19 @@ pub fn build_failure_completion(
 
 // ─── Runtime delivery worker ─────────────────────────────────────────────────
 
-/// Bridges the RabbitMQ `DeliveryWorker` trait to `run_prakash_job`.
+/// Bridges the RabbitMQ `DeliveryWorker` trait to `run_video_generation_job`.
 /// Holds the RabbitMQ message unacked for the full pipeline, then acks on
 /// success or nacks on failure (RabbitMQ redelivers).
 pub struct RuntimeDeliveryWorker {
     pub backend: std::sync::Arc<dyn WorkerBackend>,
     pub uploader: std::sync::Arc<dyn VideoUploader>,
-    pub client: std::sync::Arc<dyn PrakashCompletionClient>,
+    pub client: std::sync::Arc<dyn CompletionClient>,
 }
 
 #[async_trait::async_trait]
 impl crate::rabbitmq::consumer::DeliveryWorker for RuntimeDeliveryWorker {
-    async fn accept(&self, job: PrakashVideoJob) -> crate::rabbitmq::consumer::WorkerDecision {
-        match run_prakash_job(
+    async fn accept(&self, job: VideoGenerationJob) -> crate::rabbitmq::consumer::WorkerDecision {
+        match run_video_generation_job(
             self.backend.as_ref(),
             self.uploader.as_ref(),
             self.client.as_ref(),
@@ -204,7 +204,7 @@ mod tests {
     use super::*;
     use crate::webhook::OutputFile;
 
-    fn sample_job() -> PrakashVideoJob {
+    fn sample_job() -> VideoGenerationJob {
         serde_json::from_str(
             r#"{
             "request_id": "11111111-1111-4111-8111-111111111111",
@@ -309,7 +309,7 @@ mod tests {
     impl VideoUploader for SimpleUploader {
         async fn upload(
             &self,
-            _job: &PrakashVideoJob,
+            _job: &VideoGenerationJob,
             _path: &std::path::Path,
         ) -> anyhow::Result<UploadedVideo> {
             self.0
@@ -339,7 +339,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl crate::completion::PrakashCompletionClient for FakeCompletionClient {
+    impl crate::completion::CompletionClient for FakeCompletionClient {
         async fn send_completion(
             &self,
             _url: &str,
@@ -361,7 +361,7 @@ mod tests {
     struct NonRetryableCompletionClient;
 
     #[async_trait::async_trait]
-    impl crate::completion::PrakashCompletionClient for NonRetryableCompletionClient {
+    impl crate::completion::CompletionClient for NonRetryableCompletionClient {
         async fn send_completion(
             &self,
             _url: &str,
@@ -389,7 +389,7 @@ mod tests {
         let uploader = SimpleUploader(Some(uploaded_video()));
         let client = FakeCompletionClient::new();
 
-        run_prakash_job(&backend, &uploader, &client, sample_job())
+        run_video_generation_job(&backend, &uploader, &client, sample_job())
             .await
             .unwrap();
 
@@ -413,7 +413,7 @@ mod tests {
         let uploader = SimpleUploader(None);
         let client = FakeCompletionClient::new();
 
-        let result = run_prakash_job(&backend, &uploader, &client, sample_job()).await;
+        let result = run_video_generation_job(&backend, &uploader, &client, sample_job()).await;
         assert!(result.is_err(), "expected Err on generation failure");
         assert!(result.unwrap_err().to_string().contains("ComfyUI"));
 

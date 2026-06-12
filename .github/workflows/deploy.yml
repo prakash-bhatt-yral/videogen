@@ -129,6 +129,7 @@ jobs:
           VIDEOGEN_RABBITMQ_ENABLED: "true"
           VIDEOGEN_RABBITMQ_AMQPS_URLS: ${{ secrets.VIDEOGEN_RABBITMQ_AMQPS_URLS }}
           VIDEOGEN_RABBITMQ_TLS_CA_CERT_PEM_B64: ${{ secrets.VIDEOGEN_RABBITMQ_TLS_CA_CERT_PEM_B64 }}
+          VIDEOGEN_CALLBACK_SIGNING_KEY_ID: ${{ secrets.VIDEOGEN_CALLBACK_SIGNING_KEY_ID }}
         run: |
           ssh vastai << 'DEPLOY_EOF'
             set -e
@@ -151,6 +152,7 @@ jobs:
             export VIDEOGEN_RABBITMQ_ENABLED="true"
             export VIDEOGEN_RABBITMQ_AMQPS_URLS="${{ secrets.VIDEOGEN_RABBITMQ_AMQPS_URLS }}"
             export VIDEOGEN_RABBITMQ_TLS_CA_CERT_PEM_B64="${{ secrets.VIDEOGEN_RABBITMQ_TLS_CA_CERT_PEM_B64 }}"
+            export VIDEOGEN_CALLBACK_SIGNING_KEY_ID="${{ secrets.VIDEOGEN_CALLBACK_SIGNING_KEY_ID }}"
 
             # Ensure worker starts on port 18288
             export PORT=18288

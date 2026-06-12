@@ -79,7 +79,9 @@ pub struct UploadedVideo {
 impl UploadedVideo {
     pub fn require_bucket_url(&self) -> Result<&str> {
         self.bucket_url.as_deref().ok_or_else(|| {
-            anyhow!("bucket_url is required for success completion but was absent in Prakash job")
+            anyhow!(
+                "bucket_url is required for success completion but was absent in the job payload"
+            )
         })
     }
 }
@@ -94,7 +96,7 @@ pub enum UploadError {
     RefreshFailed(String),
     #[error("upload request failed: {0}")]
     RequestFailed(String),
-    #[error("bucket_url missing from Prakash job — cannot build success completion")]
+    #[error("bucket_url missing from job payload; cannot build success completion")]
     MissingBucketUrl,
     #[error("I/O error reading local output: {0}")]
     Io(#[from] std::io::Error),
@@ -199,13 +201,13 @@ pub async fn cleanup_staged_inputs(paths: &[PathBuf], allowed_dir: &Path) -> Res
 
 pub struct RuntimeVideoUploader {
     pub config: crate::config::UploadConfig,
-    pub client: std::sync::Arc<dyn crate::completion::PrakashCompletionClient>,
+    pub client: std::sync::Arc<dyn crate::completion::CompletionClient>,
 }
 
 impl RuntimeVideoUploader {
     pub fn new(
         config: crate::config::UploadConfig,
-        client: std::sync::Arc<dyn crate::completion::PrakashCompletionClient>,
+        client: std::sync::Arc<dyn crate::completion::CompletionClient>,
     ) -> Self {
         Self { config, client }
     }
@@ -215,7 +217,7 @@ impl RuntimeVideoUploader {
 impl crate::worker::VideoUploader for RuntimeVideoUploader {
     async fn upload(
         &self,
-        job: &crate::rabbitmq::types::PrakashVideoJob,
+        job: &crate::rabbitmq::types::VideoGenerationJob,
         local_path: &std::path::Path,
     ) -> anyhow::Result<UploadedVideo> {
         let http = reqwest::Client::new();
