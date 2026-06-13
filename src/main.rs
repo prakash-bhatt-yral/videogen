@@ -6,21 +6,39 @@ use tracing::info;
 mod auth;
 mod backend;
 mod cleanup;
+mod completion;
 mod config;
+mod rabbitmq;
 mod routes;
+mod upload;
 mod webhook;
+mod worker;
 
 use config::AppConfig;
+
+// ─── RabbitMQ runtime status ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct RabbitMqStatus {
+    pub enabled: bool,
+    pub status: String, // "connected", "disconnected", "disabled", "connecting"
+    pub queue: String,
+}
+
+// ─── Application state ───────────────────────────────────────────────────────
 
 #[derive(Clone)]
 pub struct AppState {
     pub config: AppConfig,
     pub backend: Arc<dyn backend::VideoGenBackend>,
     pub http_client: reqwest::Client,
+    pub rabbitmq_status: Arc<tokio::sync::RwLock<RabbitMqStatus>>,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // Load config
     let config = AppConfig::from_env()?;
 
@@ -68,14 +86,85 @@ async fn main() -> Result<()> {
             );
             Arc::new(comfyui)
         }
+        "stub" => {
+            info!(
+                "Using stub backend (output_dir={})",
+                config.comfyui_output_dir
+            );
+            Arc::new(backend::stub::StubBackend::new(&config.comfyui_output_dir))
+        }
         other => anyhow::bail!("Unknown backend type: {other}"),
     };
 
+    // Shared RabbitMQ status for the health endpoint
+    let rabbitmq_status = Arc::new(tokio::sync::RwLock::new(RabbitMqStatus {
+        enabled: config.rabbitmq.enabled,
+        status: if config.rabbitmq.enabled {
+            "connecting".to_string()
+        } else {
+            "disabled".to_string()
+        },
+        queue: config.rabbitmq.queue.clone(),
+    }));
+
     let state = AppState {
         config: config.clone(),
-        backend,
+        backend: Arc::clone(&backend),
         http_client: reqwest::Client::new(),
+        rabbitmq_status: Arc::clone(&rabbitmq_status),
     };
+
+    // Wire RabbitMQ consumer when enabled
+    if config.rabbitmq.enabled {
+        let auth = config.completion_auth.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("VIDEOGEN_CALLBACK_SIGNING_KEY_ID required when rabbitmq enabled")
+        })?;
+        let hmac_key = crate::completion::CompletionHmacKey::from_str(&auth.key_id, &auth.secret)?;
+        let completion_client: Arc<dyn crate::completion::CompletionClient> =
+            Arc::new(crate::completion::HmacCompletionClient::new(hmac_key));
+
+        // Build runtime worker backend
+        let worker_backend: Arc<dyn crate::worker::WorkerBackend> =
+            match config.backend_type.as_str() {
+                "stub" => Arc::new(backend::stub::StubBackend::new(&config.comfyui_output_dir)),
+                _ => Arc::new(backend::comfyui::ComfyUIBackend::new(
+                    &config.comfyui_host,
+                    config.comfyui_port,
+                )),
+            };
+
+        // Build runtime uploader
+        let worker_uploader: Arc<dyn crate::worker::VideoUploader> =
+            Arc::new(crate::upload::RuntimeVideoUploader::new(
+                config.upload.clone(),
+                Arc::clone(&completion_client),
+            ));
+
+        let real_worker = Arc::new(crate::worker::RuntimeDeliveryWorker {
+            backend: worker_backend,
+            uploader: worker_uploader,
+            client: Arc::clone(&completion_client),
+        });
+
+        // Spawn consumer
+        let status_writer = Arc::clone(&rabbitmq_status);
+        let consumer_config = config.rabbitmq.clone();
+
+        tokio::spawn(async move {
+            match crate::rabbitmq::consumer::spawn_consumer(&consumer_config, real_worker).await {
+                Ok(handle) => {
+                    status_writer.write().await.status = "connected".to_string();
+                    handle.await.ok();
+                    // Consumer loop exited — mark disconnected
+                    status_writer.write().await.status = "disconnected".to_string();
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "RabbitMQ consumer failed to start");
+                    status_writer.write().await.status = "disconnected".to_string();
+                }
+            }
+        });
+    }
 
     // Build router
     let app = routes::build_router(state);

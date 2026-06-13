@@ -195,7 +195,7 @@ impl ComfyUIClient {
         let mut outputs = Vec::new();
 
         for (node_id, node_output) in &entry.outputs {
-            // Video outputs (ComfyUI returns them under "gifs")
+            // "gifs" key — legacy ComfyUI video output path
             for file in &node_output.gifs {
                 outputs.push(OutputFile {
                     filename: file.filename.clone(),
@@ -207,15 +207,18 @@ impl ComfyUIClient {
                 });
             }
 
-            // Image outputs
+            // "images" key — used for both real images and video files (e.g. .mp4)
             for file in &node_output.images {
+                let is_video = file.filename.ends_with(".mp4")
+                    || file.filename.ends_with(".webm")
+                    || file.filename.ends_with(".gif");
                 outputs.push(OutputFile {
                     filename: file.filename.clone(),
                     subfolder: Some(file.subfolder.clone()).filter(|s| !s.is_empty()),
                     local_path: None,
                     url: None,
                     node_id: Some(node_id.clone()),
-                    output_type: Some("images".into()),
+                    output_type: Some(if is_video { "videos" } else { "images" }.into()),
                 });
             }
         }
@@ -270,9 +273,13 @@ impl ComfyUIClient {
         subfolder: Option<&str>,
         file_type: Option<&str>,
     ) -> Result<(axum::http::HeaderMap, Bytes)> {
-        let mut url = format!("{}/view?filename={}", self.base_url, filename);
+        let mut url = format!(
+            "{}/view?filename={}",
+            self.base_url,
+            urlencoding::encode(filename)
+        );
         if let Some(sf) = subfolder {
-            url.push_str(&format!("&subfolder={sf}"));
+            url.push_str(&format!("&subfolder={}", urlencoding::encode(sf)));
         }
         if let Some(ft) = file_type {
             url.push_str(&format!("&type={ft}"));

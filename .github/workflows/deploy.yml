@@ -6,17 +6,21 @@ on:
   workflow_dispatch:
     inputs:
       host:
-        description: "Vast.ai Host IP"
-        required: true
+        description: "Vast.ai Host IP (leave blank to use VASTAI_HOST secret)"
+        required: false
         type: string
       port:
-        description: "Vast.ai SSH Port"
-        required: true
+        description: "Vast.ai SSH Port (leave blank to use VASTAI_PORT secret)"
+        required: false
         type: string
       run_setup:
         description: "Run setup.sh (installs models/nodes)"
         type: boolean
         default: false
+      named_tunnel:
+        description: "Use named CF tunnel (videogen.prakash.yral.com). False = quick tunnel for testing."
+        type: boolean
+        default: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -72,15 +76,11 @@ jobs:
       - name: Resolve Vast.ai connection
         id: resolve
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "host=${{ github.event.inputs.host }}" >> $GITHUB_OUTPUT
-            echo "port=${{ github.event.inputs.port }}" >> $GITHUB_OUTPUT
-            echo "run_setup=${{ github.event.inputs.run_setup }}" >> $GITHUB_OUTPUT
-          else
-            echo "host=${{ secrets.VASTAI_HOST }}" >> $GITHUB_OUTPUT
-            echo "port=${{ secrets.VASTAI_PORT }}" >> $GITHUB_OUTPUT
-            echo "run_setup=false" >> $GITHUB_OUTPUT
-          fi
+          INPUT_HOST="${{ github.event.inputs.host }}"
+          INPUT_PORT="${{ github.event.inputs.port }}"
+          echo "host=${INPUT_HOST:-${{ secrets.VASTAI_HOST }}}" >> $GITHUB_OUTPUT
+          echo "port=${INPUT_PORT:-${{ secrets.VASTAI_PORT }}}" >> $GITHUB_OUTPUT
+          echo "run_setup=${{ github.event.inputs.run_setup || 'false' }}" >> $GITHUB_OUTPUT
 
       - name: Set up SSH key
         run: |
@@ -88,6 +88,21 @@ jobs:
           echo "${{ secrets.VASTAI_SSH_KEY }}" > ~/.ssh/vastai
           chmod 600 ~/.ssh/vastai
           echo -e "Host vastai\n  HostName ${{ steps.resolve.outputs.host }}\n  Port ${{ steps.resolve.outputs.port }}\n  User root\n  IdentityFile ~/.ssh/vastai\n  StrictHostKeyChecking no" > ~/.ssh/config
+          ssh-keyscan -H 94.130.13.115 88.99.151.102 138.201.129.173 >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Open RabbitMQ firewall for Vast.ai host
+        run: |
+          VASTAI_IP="${{ steps.resolve.outputs.host }}"
+          for NODE in 94.130.13.115 88.99.151.102 138.201.129.173; do
+            ssh -i ~/.ssh/vastai deploy@${NODE} "
+              sudo iptables -N RABBITMQ-FILTER 2>/dev/null || true
+              sudo iptables -C INPUT -p tcp --dport 5671 -j RABBITMQ-FILTER 2>/dev/null \
+                || sudo iptables -I INPUT 1 -p tcp --dport 5671 -j RABBITMQ-FILTER
+              sudo iptables -C RABBITMQ-FILTER -p tcp --dport 5671 -s ${VASTAI_IP} -j ACCEPT 2>/dev/null \
+                || sudo iptables -I RABBITMQ-FILTER 1 -p tcp --dport 5671 -s ${VASTAI_IP} -j ACCEPT
+              echo 'rule ok on ${NODE}'
+            "
+          done
 
       - name: Stop existing worker (Free binary lock)
         run: ssh vastai "tmux kill-session -t worker 2>/dev/null || true"
@@ -109,16 +124,18 @@ jobs:
         env:
           AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
-          CF_TUNNEL_TOKEN: ${{ secrets.CF_TUNNEL_TOKEN }}
           BESZEL_KEY: ${{ secrets.BESZEL_KEY }}
           BESZEL_TOKEN: ${{ secrets.BESZEL_TOKEN }}
+          VIDEOGEN_RABBITMQ_ENABLED: "true"
+          VIDEOGEN_RABBITMQ_AMQPS_URLS: ${{ secrets.VIDEOGEN_RABBITMQ_AMQPS_URLS }}
+          VIDEOGEN_RABBITMQ_TLS_CA_CERT_PEM_B64: ${{ secrets.VIDEOGEN_RABBITMQ_TLS_CA_CERT_PEM_B64 }}
+          VIDEOGEN_CALLBACK_SIGNING_KEY_ID: ${{ secrets.VIDEOGEN_CALLBACK_SIGNING_KEY_ID }}
         run: |
           ssh vastai << 'DEPLOY_EOF'
             set -e
 
-            # Stop existing services
+            # Stop existing services (tunnel preserved to keep quick tunnel URL stable)
             tmux kill-session -t worker 2>/dev/null || true
-            tmux kill-session -t tunnel 2>/dev/null || true
             tmux kill-session -t beszel 2>/dev/null || true
 
             chmod +x /workspace/videogen-worker /workspace/start.sh
@@ -126,9 +143,16 @@ jobs:
             # Export env vars for start.sh
             export AUTH_TOKEN="${{ secrets.AUTH_TOKEN }}"
             export SENTRY_DSN="${{ secrets.SENTRY_DSN }}"
-            export CF_TUNNEL_TOKEN="${{ secrets.CF_TUNNEL_TOKEN }}"
+            if [ "${{ github.event.inputs.named_tunnel }}" != "false" ]; then
+              export CF_TUNNEL_TOKEN="${{ secrets.CF_TUNNEL_TOKEN }}"
+              export CF_TUNNEL_HOSTNAME="videogen.prakash.yral.com"
+            fi
             export BESZEL_KEY="${{ secrets.BESZEL_KEY }}"
             export BESZEL_TOKEN="${{ secrets.BESZEL_TOKEN }}"
+            export VIDEOGEN_RABBITMQ_ENABLED="true"
+            export VIDEOGEN_RABBITMQ_AMQPS_URLS="${{ secrets.VIDEOGEN_RABBITMQ_AMQPS_URLS }}"
+            export VIDEOGEN_RABBITMQ_TLS_CA_CERT_PEM_B64="${{ secrets.VIDEOGEN_RABBITMQ_TLS_CA_CERT_PEM_B64 }}"
+            export VIDEOGEN_CALLBACK_SIGNING_KEY_ID="${{ secrets.VIDEOGEN_CALLBACK_SIGNING_KEY_ID }}"
 
             # Ensure worker starts on port 18288
             export PORT=18288

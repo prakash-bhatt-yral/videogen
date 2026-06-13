@@ -1,4 +1,5 @@
 pub mod comfyui;
+pub mod stub;
 
 use anyhow::Result;
 use axum::body::Bytes;
@@ -6,6 +7,20 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::webhook::{OutputFile, WebhookConfig};
+
+/// Returned after ComfyUI accepts a workflow submission (before generation completes).
+#[derive(Debug, Clone)]
+pub struct AcceptedGeneration {
+    pub request_id: String,
+    pub prompt_id: String,
+    pub client_id: String,
+}
+
+/// Returned after generation finishes — contains the raw output files.
+#[derive(Debug, Clone)]
+pub struct CompletedGeneration {
+    pub outputs: Vec<crate::webhook::OutputFile>,
+}
 
 /// Request to generate a video
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

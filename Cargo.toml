@@ -19,6 +19,7 @@ futures-util = "0.3"
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+urlencoding = "2"
 
 # Error handling
 anyhow = "1"
@@ -43,3 +44,25 @@ utoipa-swagger-ui = { version = "9", features = ["axum"] }
 # Utilities
 uuid = { version = "1", features = ["v4"] }
 url = "2"
+
+# RabbitMQ
+lapin = { version = "4", default-features = false, features = ["rustls--ring", "tokio"] }
+# Activate tcp-stream's async TLS path (rustls-futures) which lapin's rustls--ring feature omits.
+# Without this, lapin's AMQPS connect falls through to a plain TCP stream and the broker
+# responds to the bare AMQP header with a TLS alert (7 bytes) that parses as Nom(MapOpt).
+tcp-stream = { version = "0.34", default-features = false, features = ["rustls-futures", "rustls--ring", "tokio"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+futures-rustls = "0.26"
+async-compat = "0.2"
+
+# Date/time
+chrono = { version = "0.4", features = ["serde"] }
+
+# HMAC signing
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+
+[dev-dependencies]
+tempfile = "3"
