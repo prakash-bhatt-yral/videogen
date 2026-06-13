@@ -310,8 +310,6 @@ impl crate::worker::WorkerBackend for ComfyUIBackend {
             resolved.push(output);
         }
 
-        Ok(CompletedGeneration {
-            outputs: resolved,
-        })
+        Ok(CompletedGeneration { outputs: resolved })
     }
 }
