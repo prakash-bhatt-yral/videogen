@@ -83,8 +83,13 @@ if ! curl -sf "${COMFYUI_BASE}/system_stats" > /dev/null 2>&1; then
     if ! pgrep -f "python.*main.py.*18188" > /dev/null 2>&1; then
         log "ComfyUI not running — starting..."
         tmux kill-session -t comfyui 2>/dev/null || true
+
         tmux new-session -d -s comfyui \
-            "cd /workspace/ComfyUI && python3 main.py --listen 127.0.0.1 --port 18188 2>&1 | tee ${LOG_DIR}/comfyui.log"
+            "while true; do
+               cd /workspace/ComfyUI && python3 main.py --listen 127.0.0.1 --port 18188 2>&1 | tee -a ${LOG_DIR}/comfyui.log
+               echo \"[WATCHDOG] ComfyUI exited at \$(date -u +%Y-%m-%dT%H:%M:%SZ), restarting in 30s...\" | tee -a ${LOG_DIR}/comfyui.log
+               sleep 30
+             done"
     else
         log "ComfyUI process found, waiting for it to become ready..."
     fi
