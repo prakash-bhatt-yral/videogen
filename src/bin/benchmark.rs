@@ -334,6 +334,7 @@ struct JobResult {
     error: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_job(
     client: Arc<Client>,
     sem: Arc<Semaphore>,
@@ -490,8 +491,8 @@ async fn main() -> Result<()> {
     // Summary table
     println!("\n{}", "─".repeat(88));
     println!(
-        "{:<14} {:>3} {:<12} {:>8}  {}",
-        "Instance", "#", "Status", "Time", "File/Error"
+        "{:<14} {:>3} {:<12} {:>8}  File/Error",
+        "Instance", "#", "Status", "Time"
     );
     println!("{}", "─".repeat(88));
     for r in &results {

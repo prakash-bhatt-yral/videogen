@@ -75,6 +75,7 @@ impl std::fmt::Debug for UploadDestination {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, thiserror::Error)]
 pub enum JobValidationError {
     #[error("invalid request_id: {0}")]
@@ -94,6 +95,7 @@ pub enum JobValidationError {
 }
 
 impl VideoGenerationJob {
+    #[allow(dead_code)]
     pub fn validate(&self) -> Result<(), JobValidationError> {
         Uuid::parse_str(&self.request_id)
             .map_err(|e| JobValidationError::InvalidRequestId(e.to_string()))?;

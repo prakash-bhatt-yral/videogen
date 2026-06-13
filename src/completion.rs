@@ -25,6 +25,7 @@ impl CompletionHmacKey {
     }
 
     /// Build key from a base64-encoded secret (kept for compatibility).
+    #[allow(dead_code)]
     pub fn from_base64(key_id: &str, secret_b64: &str) -> anyhow::Result<Self> {
         let secret = base64::engine::general_purpose::STANDARD
             .decode(secret_b64)
@@ -157,6 +158,7 @@ pub enum CompletionDeliveryResult {
 }
 
 impl CompletionDeliveryResult {
+    #[allow(dead_code)]
     pub fn is_terminal(&self) -> bool {
         matches!(self, Self::Accepted(_))
     }

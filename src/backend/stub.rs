@@ -67,7 +67,6 @@ impl WorkerBackend for StubBackend {
         );
 
         Ok(CompletedGeneration {
-            prompt_id: accepted.prompt_id.clone(),
             outputs: vec![OutputFile {
                 filename,
                 local_path: Some(path.to_string_lossy().into_owned()),

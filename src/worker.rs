@@ -136,6 +136,7 @@ pub fn build_success_completion(
     }
 }
 
+#[allow(dead_code)]
 pub fn build_failure_completion(
     job: &VideoGenerationJob,
     reason: &str,
@@ -295,7 +296,6 @@ mod tests {
             _timeout: u64,
         ) -> anyhow::Result<CompletedGeneration> {
             Ok(CompletedGeneration {
-                prompt_id: accepted.prompt_id.clone(),
                 outputs: self.outputs.clone(),
             })
         }

@@ -25,6 +25,7 @@ pub fn select_primary_video_output(outputs: &[OutputFile]) -> Result<&OutputFile
         .ok_or_else(|| anyhow!("no video output found among {} files", outputs.len()))
 }
 
+#[allow(dead_code)]
 pub fn resolve_comfy_output_path(output_dir: &str, output: &OutputFile) -> Result<PathBuf> {
     if output.filename.contains("..") || output.filename.starts_with('/') {
         return Err(anyhow!("unsafe filename: {}", output.filename));
@@ -90,14 +91,8 @@ impl UploadedVideo {
 
 #[derive(Debug, thiserror::Error)]
 pub enum UploadError {
-    #[error("upload URL expired and no refresh URL available")]
-    UrlExpiredNoRefresh,
-    #[error("upload URL refresh failed: {0}")]
-    RefreshFailed(String),
     #[error("upload request failed: {0}")]
     RequestFailed(String),
-    #[error("bucket_url missing from job payload; cannot build success completion")]
-    MissingBucketUrl,
     #[error("I/O error reading local output: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -156,6 +151,7 @@ pub async fn upload_video(
 
 // ─── Cleanup ──────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 pub async fn cleanup_local_output(path: &Path, output_dir: &str) -> Result<()> {
     let base = std::fs::canonicalize(output_dir).unwrap_or_else(|_| PathBuf::from(output_dir));
     let canonical = match std::fs::canonicalize(path) {
@@ -175,6 +171,7 @@ pub async fn cleanup_local_output(path: &Path, output_dir: &str) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub async fn cleanup_staged_inputs(paths: &[PathBuf], allowed_dir: &Path) -> Result<()> {
     let canonical_allowed =
         std::fs::canonicalize(allowed_dir).unwrap_or_else(|_| allowed_dir.to_path_buf());

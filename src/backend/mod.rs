@@ -19,7 +19,6 @@ pub struct AcceptedGeneration {
 /// Returned after generation finishes — contains the raw output files.
 #[derive(Debug, Clone)]
 pub struct CompletedGeneration {
-    pub prompt_id: String,
     pub outputs: Vec<crate::webhook::OutputFile>,
 }
 

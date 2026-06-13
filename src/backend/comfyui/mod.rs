@@ -201,9 +201,7 @@ impl ComfyUIBackend {
                     .and_then(|v| v.to_str().ok())
                     .unwrap_or("image/jpeg")
                     .to_string();
-                let bytes = axum::body::Bytes::from(
-                    resp.bytes().await.context("failed to read image bytes")?,
-                );
+                let bytes = resp.bytes().await.context("failed to read image bytes")?;
                 let ext = if content_type.contains("png") {
                     "png"
                 } else {
@@ -313,7 +311,6 @@ impl crate::worker::WorkerBackend for ComfyUIBackend {
         }
 
         Ok(CompletedGeneration {
-            prompt_id: accepted.prompt_id.clone(),
             outputs: resolved,
         })
     }

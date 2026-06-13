@@ -16,6 +16,7 @@ pub enum WorkerDecision {
     Accepted,
     TransientError(String),
     ValidationFailure(String),
+    #[allow(dead_code)]
     Duplicate,
 }
 
@@ -25,6 +26,7 @@ pub enum WorkerDecision {
 pub struct DeliveryProperties {
     pub message_id: Option<String>,
     pub correlation_id: Option<String>,
+    #[allow(dead_code)]
     pub content_type: Option<String>,
 }
 
@@ -38,6 +40,7 @@ pub trait DeliveryWorker: Send + Sync {
 // ─── Handler (pure dispatcher — unit-testable seam) ──────────────────────────
 
 /// Thin wrapper: no AMQP properties to validate, just parse and dispatch.
+#[allow(dead_code)]
 pub async fn handle_delivery_body(body: &[u8], worker: &dyn DeliveryWorker) -> DeliveryDecision {
     handle_delivery(body, DeliveryProperties::default(), worker).await
 }
