@@ -63,6 +63,15 @@ const PROMPTS: &[&str] = &[
     // r#"Medium Close-up on Raju behind his bustling chai tapri on a vibrant Indian street corner. Golden hour sunlight splashes across his worn wooden counter, illuminating the rising steam from bubbling chai pots and the vibrant chaos of the street. Raju, a lean"#,
 ];
 
+// Optional per-prompt images. Parallel to PROMPTS: IMAGES[i] pairs with PROMPTS[i].
+// Empty string "" = T2V for that slot. https:// = URL; anything else = local file path.
+// Leave empty to use IMAGE_FILE / IMAGE_URL env vars (or T2V if neither is set).
+const IMAGES: &[&str] = &[
+    // "/path/to/photo.png",
+    // "https://example.com/photo.jpg",
+    // "",  // T2V for this prompt
+];
+
 // ── API types ───────────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -103,9 +112,8 @@ struct OutputFile {
 
 // ── Workflow builder ────────────────────────────────────────────────────────
 
-fn build_t2v_workflow(prompt: &str, _frames: u32) -> Value {
-    // LTX-2.3 two-pass workflow (T2V, bypass=true so image input is ignored).
-    // Matches exactly what off-chain-agent comfyui_client.rs sends.
+fn build_workflow(prompt: &str, _frames: u32, is_t2v: bool) -> Value {
+    // LTX-2.3 two-pass workflow. bypass=true for T2V, false for I2V.
     let mut w = serde_json::Map::new();
 
     // Model loaders
@@ -118,8 +126,8 @@ fn build_t2v_workflow(prompt: &str, _frames: u32) -> Value {
     // Video parameters
     w.insert(
         "267:201".into(),
-        json!({"inputs": {"value": true}, "class_type": "PrimitiveBoolean"}),
-    ); // is_t2v=true
+        json!({"inputs": {"value": is_t2v}, "class_type": "PrimitiveBoolean"}),
+    ); // bypass: true=T2V, false=I2V
     w.insert(
         "267:260".into(),
         json!({"inputs": {"value": 25}, "class_type": "PrimitiveInt"}),
@@ -223,11 +231,25 @@ async fn submit_job(
     prompt: &str,
     image_url: Option<String>,
 ) -> Result<String> {
+    // __local__<filename> means the file was already uploaded; patch the workflow directly.
+    let (is_t2v, local_filename, url_for_server) = match &image_url {
+        None => (true, None, None),
+        Some(u) if u.starts_with("__local__") => {
+            (false, Some(u["__local__".len()..].to_string()), None)
+        }
+        Some(u) => (false, None, Some(u.clone())),
+    };
+    let mut workflow = build_workflow(prompt, VIDEO_SECONDS, is_t2v);
+    if let Some(fname) = local_filename {
+        if let Some(node) = workflow.get_mut("267:276") {
+            node["inputs"]["image"] = serde_json::Value::String(fname);
+        }
+    }
     let body = GenerateRequest {
         input: GenerateInput {
             request_id: Uuid::new_v4().to_string(),
-            workflow_json: build_t2v_workflow(prompt, VIDEO_SECONDS),
-            image_url,
+            workflow_json: workflow,
+            image_url: url_for_server,
         },
     };
     let resp = client
@@ -322,6 +344,65 @@ async fn download_video(
     Ok(())
 }
 
+// ── Image source ────────────────────────────────────────────────────────────
+
+enum ImageSource {
+    None,
+    Url(String),
+    LocalFile { bytes: Vec<u8>, filename: String },
+}
+
+impl Clone for ImageSource {
+    fn clone(&self) -> Self {
+        match self {
+            Self::None => Self::None,
+            Self::Url(u) => Self::Url(u.clone()),
+            Self::LocalFile { bytes, filename } => Self::LocalFile {
+                bytes: bytes.clone(),
+                filename: filename.clone(),
+            },
+        }
+    }
+}
+
+async fn upload_image_to_instance(
+    client: &Client,
+    base_url: &str,
+    token: &str,
+    bytes: Vec<u8>,
+    filename: &str,
+) -> Result<String> {
+    let ext = std::path::Path::new(filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png")
+        .to_lowercase();
+    let mime = match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        _ => "image/png",
+    };
+    let part = reqwest::multipart::Part::bytes(bytes)
+        .file_name(filename.to_string())
+        .mime_str(mime)?;
+    let form = reqwest::multipart::Form::new().part("image", part);
+    let resp = client
+        .post(format!("{}/upload/image", base_url.trim_end_matches('/')))
+        .bearer_auth(token)
+        .multipart(form)
+        .send()
+        .await
+        .context("POST /upload/image")?
+        .error_for_status()
+        .context("POST /upload/image status")?;
+    #[derive(Deserialize)]
+    struct UploadResp {
+        name: String,
+    }
+    let ur: UploadResp = resp.json().await.context("parse upload response")?;
+    Ok(ur.name)
+}
+
 // ── Per-job runner ──────────────────────────────────────────────────────────
 
 struct JobResult {
@@ -344,6 +425,7 @@ async fn run_job(
     prompt_idx: usize,
     prompt: String,
     output_dir: PathBuf,
+    image_source: ImageSource,
 ) -> JobResult {
     let label = format!("{instance_name}_prompt{prompt_idx:02}");
     let snippet: String = prompt.chars().take(60).collect();
@@ -355,7 +437,19 @@ async fn run_job(
     let t0 = Instant::now();
 
     let result: Result<(String, String)> = async {
-        let job_id = submit_job(&client, &base_url, &token, &prompt, None).await?;
+        // Resolve image: local file → upload first; URL → pass through; None → T2V
+        let image_url: Option<String> = match image_source {
+            ImageSource::None => None,
+            ImageSource::Url(u) => Some(u),
+            ImageSource::LocalFile { bytes, filename } => {
+                let uploaded =
+                    upload_image_to_instance(&client, &base_url, &token, bytes, &filename).await?;
+                println!("  → [{label}] image uploaded as {uploaded}");
+                // Patch image_url with a sentinel that submit_job passes into the workflow
+                Some(format!("__local__{uploaded}"))
+            }
+        };
+        let job_id = submit_job(&client, &base_url, &token, &prompt, image_url).await?;
         println!(
             "  → [{label}] job={} polling…",
             &job_id[..8.min(job_id.len())]
@@ -419,6 +513,24 @@ async fn main() -> Result<()> {
     let token = std::env::var("AUTH_TOKEN")
         .context("AUTH_TOKEN env var not set — set it or source your .env")?;
     let token = token.trim().to_string();
+    let image_source: ImageSource =
+        if let Some(path) = std::env::var("IMAGE_FILE").ok().filter(|s| !s.is_empty()) {
+            let p = std::path::Path::new(&path);
+            let bytes =
+                std::fs::read(p).with_context(|| format!("failed to read IMAGE_FILE: {path}"))?;
+            let filename = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("image.png")
+                .to_string();
+            println!("Image mode: local file {path} ({} bytes)\n", bytes.len());
+            ImageSource::LocalFile { bytes, filename }
+        } else if let Some(url) = std::env::var("IMAGE_URL").ok().filter(|s| !s.is_empty()) {
+            println!("Image mode: URL {url}\n");
+            ImageSource::Url(url)
+        } else {
+            ImageSource::None
+        };
 
     let base_dir = PathBuf::from(OUTPUT_DIR);
     fs::create_dir_all(&base_dir).await?;
@@ -438,6 +550,38 @@ async fn main() -> Result<()> {
             .danger_accept_invalid_certs(true)
             .build()?,
     );
+
+    // Build per-prompt image sources: IMAGES[] takes priority over env-var image_source.
+    let per_prompt_images: Vec<ImageSource> = if !IMAGES.is_empty() {
+        if IMAGES.len() != PROMPTS.len() {
+            anyhow::bail!(
+                "IMAGES length ({}) must match PROMPTS length ({})",
+                IMAGES.len(),
+                PROMPTS.len()
+            );
+        }
+        let mut sources = Vec::with_capacity(IMAGES.len());
+        for &img in IMAGES {
+            sources.push(if img.is_empty() {
+                ImageSource::None
+            } else if img.starts_with("http://") || img.starts_with("https://") {
+                ImageSource::Url(img.to_string())
+            } else {
+                let bytes =
+                    std::fs::read(img).with_context(|| format!("failed to read image: {img}"))?;
+                let filename = std::path::Path::new(img)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("image.png")
+                    .to_string();
+                ImageSource::LocalFile { bytes, filename }
+            });
+        }
+        sources
+    } else {
+        // Fall back to the single env-var source for every prompt
+        vec![image_source; PROMPTS.len()]
+    };
 
     let total = INSTANCES.len() * PROMPTS.len();
     println!(
@@ -462,6 +606,7 @@ async fn main() -> Result<()> {
                 idx + 1,
                 prompt.to_string(),
                 instance_dir.clone(),
+                per_prompt_images[idx].clone(),
             ));
         }
     }
