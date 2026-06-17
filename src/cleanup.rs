@@ -58,7 +58,6 @@ async fn run_cleanup(output_dir: &str, ttl: Duration) -> anyhow::Result<(usize, 
     let mut deleted_count = 0;
     let mut freed_bytes = 0;
 
-    // Check if directory exists
     if !fs::try_exists(output_dir).await.unwrap_or(false) {
         debug!(
             "Output directory {} does not exist, skipping cleanup",
@@ -67,51 +66,59 @@ async fn run_cleanup(output_dir: &str, ttl: Duration) -> anyhow::Result<(usize, 
         return Ok((0, 0));
     }
 
-    let mut entries = fs::read_dir(output_dir).await?;
-
-    while let Some(entry) = entries.next_entry().await? {
-        let path = entry.path();
-
-        if !path.is_file() {
-            continue;
-        }
-
-        // Check extension
-        let is_video = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| VIDEO_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
-            .unwrap_or(false);
-
-        if !is_video {
-            continue;
-        }
-
-        // Check age
-        let metadata = match entry.metadata().await {
-            Ok(m) => m,
+    let mut dirs = vec![output_dir.to_string()];
+    while let Some(dir) = dirs.pop() {
+        let mut entries = match fs::read_dir(&dir).await {
+            Ok(e) => e,
             Err(e) => {
-                error!("Failed to read metadata for {:?}: {}", path, e);
+                error!("Failed to read dir {}: {}", dir, e);
                 continue;
             }
         };
 
-        let modified = match metadata.modified() {
-            Ok(m) => m,
-            Err(_) => continue, // Filesystem doesn't support modified time
-        };
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
 
-        if let Ok(elapsed) = modified.elapsed() {
-            if elapsed > ttl {
-                let size = metadata.len();
-                match fs::remove_file(&path).await {
-                    Ok(_) => {
-                        deleted_count += 1;
-                        freed_bytes += size;
-                        debug!("Deleted expired video: {:?}", path);
-                    }
-                    Err(e) => {
-                        error!("Failed to delete {:?}: {}", path, e);
+            if path.is_dir() {
+                dirs.push(path.to_string_lossy().into_owned());
+                continue;
+            }
+
+            let is_video = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| VIDEO_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+                .unwrap_or(false);
+
+            if !is_video {
+                continue;
+            }
+
+            let metadata = match entry.metadata().await {
+                Ok(m) => m,
+                Err(e) => {
+                    error!("Failed to read metadata for {:?}: {}", path, e);
+                    continue;
+                }
+            };
+
+            let modified = match metadata.modified() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+
+            if let Ok(elapsed) = modified.elapsed() {
+                if elapsed > ttl {
+                    let size = metadata.len();
+                    match fs::remove_file(&path).await {
+                        Ok(_) => {
+                            deleted_count += 1;
+                            freed_bytes += size;
+                            debug!("Deleted expired video: {:?}", path);
+                        }
+                        Err(e) => {
+                            error!("Failed to delete {:?}: {}", path, e);
+                        }
                     }
                 }
             }
