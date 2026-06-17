@@ -442,7 +442,8 @@ async fn run_job(
             ImageSource::None => None,
             ImageSource::Url(u) => Some(u),
             ImageSource::LocalFile { bytes, filename } => {
-                let uploaded = upload_image_to_instance(&client, &base_url, &token, bytes, &filename).await?;
+                let uploaded =
+                    upload_image_to_instance(&client, &base_url, &token, bytes, &filename).await?;
                 println!("  → [{label}] image uploaded as {uploaded}");
                 // Patch image_url with a sentinel that submit_job passes into the workflow
                 Some(format!("__local__{uploaded}"))
@@ -515,8 +516,8 @@ async fn main() -> Result<()> {
     let image_source: ImageSource =
         if let Some(path) = std::env::var("IMAGE_FILE").ok().filter(|s| !s.is_empty()) {
             let p = std::path::Path::new(&path);
-            let bytes = std::fs::read(p)
-                .with_context(|| format!("failed to read IMAGE_FILE: {path}"))?;
+            let bytes =
+                std::fs::read(p).with_context(|| format!("failed to read IMAGE_FILE: {path}"))?;
             let filename = p
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -566,8 +567,8 @@ async fn main() -> Result<()> {
             } else if img.starts_with("http://") || img.starts_with("https://") {
                 ImageSource::Url(img.to_string())
             } else {
-                let bytes = std::fs::read(img)
-                    .with_context(|| format!("failed to read image: {img}"))?;
+                let bytes =
+                    std::fs::read(img).with_context(|| format!("failed to read image: {img}"))?;
                 let filename = std::path::Path::new(img)
                     .file_name()
                     .and_then(|n| n.to_str())
