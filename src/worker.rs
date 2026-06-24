@@ -50,6 +50,12 @@ pub async fn run_video_generation_job(
     let request_id = &job.request_id;
     info!(request_id, model_id = %job.model_id, "job received — submitting workflow");
 
+    // 0. Reject immediately if upload URL already expired — no point burning GPU.
+    let expires_at = job.upload_destination.expires_at;
+    if expires_at <= chrono::Utc::now() {
+        anyhow::bail!("upload URL expired and no refresh URL available");
+    }
+
     // 1. Submit to ComfyUI
     let accepted = backend
         .submit_workflow(request_id, job.workflow_json.clone())
@@ -136,7 +142,6 @@ pub fn build_success_completion(
     }
 }
 
-#[allow(dead_code)]
 pub fn build_failure_completion(
     job: &VideoGenerationJob,
     reason: &str,
@@ -165,6 +170,13 @@ pub fn build_failure_completion(
 
 // ─── Runtime delivery worker ─────────────────────────────────────────────────
 
+/// Errors that will never resolve on retry — expired upload URLs, missing output files.
+/// These should be rejected (not nacked) so they don't loop forever.
+fn is_permanent_error(msg: &str) -> bool {
+    msg.contains("upload URL expired and no refresh URL available")
+        || msg.contains("output has no local_path")
+}
+
 /// Bridges the RabbitMQ `DeliveryWorker` trait to `run_video_generation_job`.
 /// Holds the RabbitMQ message unacked for the full pipeline, then acks on
 /// success or nacks on failure (RabbitMQ redelivers).
@@ -177,6 +189,7 @@ pub struct RuntimeDeliveryWorker {
 #[async_trait::async_trait]
 impl crate::rabbitmq::consumer::DeliveryWorker for RuntimeDeliveryWorker {
     async fn accept(&self, job: VideoGenerationJob) -> crate::rabbitmq::consumer::WorkerDecision {
+        let job_snapshot = job.clone();
         match run_video_generation_job(
             self.backend.as_ref(),
             self.uploader.as_ref(),
@@ -188,7 +201,22 @@ impl crate::rabbitmq::consumer::DeliveryWorker for RuntimeDeliveryWorker {
             Ok(()) => crate::rabbitmq::consumer::WorkerDecision::Accepted,
             Err(e) => {
                 let msg = e.to_string();
-                if msg.contains("(permanent)") {
+                if is_permanent_error(&msg) {
+                    // Best-effort failure callback so the caller isn't left waiting forever.
+                    let body = build_failure_completion(&job_snapshot, &msg);
+                    if let Err(ce) = self
+                        .client
+                        .send_completion(&job_snapshot.callback_url, &body)
+                        .await
+                    {
+                        tracing::error!(
+                            request_id = %job_snapshot.request_id,
+                            error = %ce,
+                            "failed to send failure completion for permanent error"
+                        );
+                    }
+                    crate::rabbitmq::consumer::WorkerDecision::PermanentError(msg)
+                } else if msg.contains("(permanent)") {
                     crate::rabbitmq::consumer::WorkerDecision::ValidationFailure(msg)
                 } else {
                     crate::rabbitmq::consumer::WorkerDecision::TransientError(msg)

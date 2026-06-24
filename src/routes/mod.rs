@@ -73,17 +73,23 @@ impl utoipa::Modify for SecurityAddon {
 }
 
 pub fn build_router(state: AppState) -> Router {
-    Router::new()
+    let protected = Router::new()
         .route("/generate", post(generate::handle_generate))
         .route("/result/{job_id}", get(generate::handle_get_result))
         .route("/upload/image", post(upload::handle_upload_image))
         .route("/view", get(view::handle_view))
-        .route("/health", get(health::handle_health))
-        .route("/", get(health::handle_root))
-        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,
-        ))
+        ));
+
+    let public = Router::new()
+        .route("/health", get(health::handle_health))
+        .route("/", get(health::handle_root))
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()));
+
+    Router::new()
+        .merge(protected)
+        .merge(public)
         .with_state(state)
 }
