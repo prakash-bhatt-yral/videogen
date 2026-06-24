@@ -67,9 +67,9 @@ const PROMPTS: &[&str] = &[
 // Empty string "" = T2V for that slot. https:// = URL; anything else = local file path.
 // Leave empty to use IMAGE_FILE / IMAGE_URL env vars (or T2V if neither is set).
 const IMAGES: &[&str] = &[
-    // "/path/to/photo.png",
-    // "https://example.com/photo.jpg",
-    // "",  // T2V for this prompt
+    "sample.jpeg", // "/path/to/photo.png",
+                   // "https://example.com/photo.jpg",
+                   // "",  // T2V for this prompt
 ];
 
 // ── API types ───────────────────────────────────────────────────────────────
@@ -112,7 +112,7 @@ struct OutputFile {
 
 // ── Workflow builder ────────────────────────────────────────────────────────
 
-fn build_workflow(prompt: &str, _frames: u32, is_t2v: bool) -> Value {
+fn build_workflow(prompt: &str, _frames: u32, is_t2v: bool, seed: u64) -> Value {
     // LTX-2.3 two-pass workflow. bypass=true for T2V, false for I2V.
     let mut w = serde_json::Map::new();
 
@@ -176,7 +176,7 @@ fn build_workflow(prompt: &str, _frames: u32, is_t2v: bool) -> Value {
     w.insert("267:222".into(), json!({"inputs": {"video_latent": ["267:249", 0], "audio_latent": ["267:214", 0]}, "class_type": "LTXVConcatAVLatent"}));
     w.insert(
         "267:237".into(),
-        json!({"inputs": {"noise_seed": 0}, "class_type": "RandomNoise"}),
+        json!({"inputs": {"noise_seed": seed}, "class_type": "RandomNoise"}),
     );
     w.insert("267:209".into(), json!({"inputs": {"sampler_name": "euler_ancestral_cfg_pp"}, "class_type": "KSamplerSelect"}));
     w.insert("267:252".into(), json!({"inputs": {"sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"}, "class_type": "ManualSigmas"}));
@@ -196,7 +196,7 @@ fn build_workflow(prompt: &str, _frames: u32, is_t2v: bool) -> Value {
     w.insert("267:212".into(), json!({"inputs": {"positive": ["267:239", 0], "negative": ["267:239", 1], "latent": ["267:217", 0]}, "class_type": "LTXVCropGuides"}));
     w.insert(
         "267:216".into(),
-        json!({"inputs": {"noise_seed": 0}, "class_type": "RandomNoise"}),
+        json!({"inputs": {"noise_seed": seed}, "class_type": "RandomNoise"}),
     );
     w.insert(
         "267:246".into(),
@@ -239,7 +239,11 @@ async fn submit_job(
         }
         Some(u) => (false, None, Some(u.clone())),
     };
-    let mut workflow = build_workflow(prompt, VIDEO_SECONDS, is_t2v);
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(42);
+    let mut workflow = build_workflow(prompt, VIDEO_SECONDS, is_t2v, seed);
     if let Some(fname) = local_filename {
         if let Some(node) = workflow.get_mut("267:276") {
             node["inputs"]["image"] = serde_json::Value::String(fname);

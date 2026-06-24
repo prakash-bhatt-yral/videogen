@@ -230,6 +230,7 @@ impl crate::worker::WorkerBackend for ComfyUIBackend {
     ) -> anyhow::Result<AcceptedGeneration> {
         info!(request_id, "resolving LoadImage URLs in workflow");
         let workflow_json = self.resolve_image_urls(workflow_json).await?;
+        let workflow_json = randomize_noise_seeds(workflow_json);
         let client_id = uuid::Uuid::new_v4().to_string();
         let prompt_id = self.client.queue_prompt(&workflow_json, &client_id).await?;
         info!(request_id, prompt_id = %prompt_id, "workflow queued in ComfyUI");
@@ -312,4 +313,23 @@ impl crate::worker::WorkerBackend for ComfyUIBackend {
 
         Ok(CompletedGeneration { outputs: resolved })
     }
+}
+
+/// Overwrite `noise_seed` in every `RandomNoise` node so ComfyUI never serves a cached result.
+fn randomize_noise_seeds(mut workflow: serde_json::Value) -> serde_json::Value {
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(42);
+
+    if let Some(nodes) = workflow.as_object_mut() {
+        for node in nodes.values_mut() {
+            if node.get("class_type").and_then(|v| v.as_str()) == Some("RandomNoise") {
+                if let Some(inputs) = node.get_mut("inputs") {
+                    inputs["noise_seed"] = serde_json::Value::from(seed);
+                }
+            }
+        }
+    }
+    workflow
 }

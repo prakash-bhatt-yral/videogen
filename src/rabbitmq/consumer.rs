@@ -15,6 +15,9 @@ pub enum DeliveryDecision {
 pub enum WorkerDecision {
     Accepted,
     TransientError(String),
+    /// Unrecoverable — message will never succeed on retry (e.g. expired URL, missing output).
+    /// Maps to basic_reject(requeue=false) so it lands in a DLQ if configured.
+    PermanentError(String),
     ValidationFailure(String),
     #[allow(dead_code)]
     Duplicate,
@@ -96,6 +99,10 @@ pub async fn handle_delivery(
         WorkerDecision::ValidationFailure(reason) => {
             tracing::warn!(reason = %reason, "worker rejected job as validation failure — acking to drain queue");
             DeliveryDecision::Ack
+        }
+        WorkerDecision::PermanentError(e) => {
+            tracing::error!(error = %e, "permanent worker error — rejecting without requeue");
+            DeliveryDecision::RejectNoRequeue
         }
         WorkerDecision::TransientError(e) => {
             tracing::warn!(error = %e, "transient worker error — nacking with requeue");
