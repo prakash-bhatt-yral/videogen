@@ -140,28 +140,39 @@ async fn main() -> Result<()> {
                 Arc::clone(&completion_client),
             ));
 
-        let real_worker = Arc::new(crate::worker::RuntimeDeliveryWorker {
-            backend: worker_backend,
-            uploader: worker_uploader,
-            client: Arc::clone(&completion_client),
-        });
+        let real_worker: Arc<dyn crate::rabbitmq::consumer::DeliveryWorker> =
+            Arc::new(crate::worker::RuntimeDeliveryWorker {
+                backend: worker_backend,
+                uploader: worker_uploader,
+                client: Arc::clone(&completion_client),
+            });
 
-        // Spawn consumer
+        // Spawn consumer with reconnect loop
         let status_writer = Arc::clone(&rabbitmq_status);
         let consumer_config = config.rabbitmq.clone();
 
         tokio::spawn(async move {
-            match crate::rabbitmq::consumer::spawn_consumer(&consumer_config, real_worker).await {
-                Ok(handle) => {
-                    status_writer.write().await.status = "connected".to_string();
-                    handle.await.ok();
-                    // Consumer loop exited — mark disconnected
-                    status_writer.write().await.status = "disconnected".to_string();
+            let mut backoff_secs = 5u64;
+            loop {
+                match crate::rabbitmq::consumer::spawn_consumer(
+                    &consumer_config,
+                    Arc::clone(&real_worker),
+                )
+                .await
+                {
+                    Ok(handle) => {
+                        status_writer.write().await.status = "connected".to_string();
+                        backoff_secs = 5; // reset on successful connection
+                        handle.await.ok();
+                        tracing::warn!("RabbitMQ consumer disconnected — will reconnect");
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, backoff_secs, "RabbitMQ consumer failed to start — will retry");
+                    }
                 }
-                Err(e) => {
-                    tracing::error!(error = %e, "RabbitMQ consumer failed to start");
-                    status_writer.write().await.status = "disconnected".to_string();
-                }
+                status_writer.write().await.status = "reconnecting".to_string();
+                tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
+                backoff_secs = (backoff_secs * 2).min(60);
             }
         });
     }
