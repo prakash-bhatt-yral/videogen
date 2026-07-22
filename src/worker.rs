@@ -184,6 +184,7 @@ pub struct RuntimeDeliveryWorker {
     pub backend: std::sync::Arc<dyn WorkerBackend>,
     pub uploader: std::sync::Arc<dyn VideoUploader>,
     pub client: std::sync::Arc<dyn CompletionClient>,
+    pub recent_jobs: std::sync::Arc<tokio::sync::RwLock<std::collections::VecDeque<chrono::DateTime<chrono::Utc>>>>,
 }
 
 #[async_trait::async_trait]
@@ -198,7 +199,14 @@ impl crate::rabbitmq::consumer::DeliveryWorker for RuntimeDeliveryWorker {
         )
         .await
         {
-            Ok(()) => crate::rabbitmq::consumer::WorkerDecision::Accepted,
+            Ok(()) => {
+                let mut jobs = self.recent_jobs.write().await;
+                jobs.push_back(chrono::Utc::now());
+                if jobs.len() > 5 {
+                    jobs.pop_front();
+                }
+                crate::rabbitmq::consumer::WorkerDecision::Accepted
+            }
             Err(e) => {
                 let msg = e.to_string();
                 if is_permanent_error(&msg) {
@@ -456,6 +464,9 @@ mod tests {
             backend: std::sync::Arc::new(FakeBackend::completes_with(vec![video_output()])),
             uploader: std::sync::Arc::new(SimpleUploader(Some(uploaded_video()))),
             client: std::sync::Arc::new(NonRetryableCompletionClient),
+            recent_jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
+                std::collections::VecDeque::new(),
+            )),
         };
 
         let decision = worker.accept(sample_job()).await;

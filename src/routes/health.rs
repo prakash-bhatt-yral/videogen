@@ -16,6 +16,13 @@ use crate::{backend::HealthResponse, AppState};
 pub async fn handle_health(State(state): State<AppState>) -> Json<serde_json::Value> {
     let health = state.backend.health_check().await;
     let rmq = state.rabbitmq_status.read().await;
+    let recent: Vec<String> = state
+        .recent_jobs
+        .read()
+        .await
+        .iter()
+        .map(|dt| dt.to_rfc3339())
+        .collect();
     let base = match health {
         Ok(h) => serde_json::to_value(h).unwrap_or_default(),
         Err(e) => json!({
@@ -33,6 +40,7 @@ pub async fn handle_health(State(state): State<AppState>) -> Json<serde_json::Va
             "queue": rmq.queue,
         }),
     );
+    obj.insert("recent_jobs".to_string(), json!(recent));
     Json(serde_json::Value::Object(obj))
 }
 
@@ -78,6 +86,7 @@ mod tests {
                 status: "disabled".to_string(),
                 queue: "".to_string(),
             })),
+            recent_jobs: Arc::new(tokio::sync::RwLock::new(std::collections::VecDeque::new())),
         }
     }
 

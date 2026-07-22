@@ -33,6 +33,7 @@ pub struct AppState {
     pub backend: Arc<dyn backend::VideoGenBackend>,
     pub http_client: reqwest::Client,
     pub rabbitmq_status: Arc<tokio::sync::RwLock<RabbitMqStatus>>,
+    pub recent_jobs: Arc<tokio::sync::RwLock<std::collections::VecDeque<chrono::DateTime<chrono::Utc>>>>,
 }
 
 #[tokio::main]
@@ -107,11 +108,16 @@ async fn main() -> Result<()> {
         queue: config.rabbitmq.queue.clone(),
     }));
 
+    let recent_jobs = Arc::new(tokio::sync::RwLock::new(
+        std::collections::VecDeque::<chrono::DateTime<chrono::Utc>>::new(),
+    ));
+
     let state = AppState {
         config: config.clone(),
         backend: Arc::clone(&backend),
         http_client: reqwest::Client::new(),
         rabbitmq_status: Arc::clone(&rabbitmq_status),
+        recent_jobs: Arc::clone(&recent_jobs),
     };
 
     // Wire RabbitMQ consumer when enabled
@@ -145,6 +151,7 @@ async fn main() -> Result<()> {
                 backend: worker_backend,
                 uploader: worker_uploader,
                 client: Arc::clone(&completion_client),
+                recent_jobs: Arc::clone(&recent_jobs),
             });
 
         // Spawn consumer with reconnect loop
